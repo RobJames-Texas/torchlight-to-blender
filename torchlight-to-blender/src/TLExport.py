@@ -1,10 +1,10 @@
 #!BPY
 
 """
-Name: 'OGRE for Torchlight (*.MESH)'
-Blender: 2.59, 2.62, 2.63a
+Name: 'OGRE for Torchlight 2 (*.MESH)'
+Blender: 2.59, 2.62, 2.63a, 2.78c
 Group: 'Import/Export'
-Tooltip: 'Import/Export Torchlight OGRE mesh files'
+Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
     
 Author: Dusho
 
@@ -14,7 +14,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Dusho"
-__version__ = "0.6.2 09-Mar-2013"
+__version__ = "0.6.4 25-Mar-2017"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -33,6 +33,8 @@ Known issues:<br>
     * imported materials will loose certain informations not applicable to Blender when exported
      
 History:<br>
+    * v0.6.4   (25-Mar-2017) - BUGFIX: By material was breaking armor sets
+    * v0.6.3   (01-Jan-2017) - I'm not Dusho, but I added ability to export multiple materials and textures on a single mesh.
     * v0.6.2   (09-Mar-2013) - bug fixes (working with materials+textures), added 'Apply modifiers' and 'Copy textures'
     * v0.6.1   (27-Sep-2012) - updated to work with Blender 2.63a
     * v0.6     (01-Sep-2012) - added skeleton import + vertex weights import/export
@@ -449,14 +451,11 @@ def indent(indent):
     """
     return "        "*indent 
 
-def xSaveGeometry(geometry, xDoc, xMesh, isShared):
+def xSaveGeometry(geometry, xDoc, xMesh):
     # I guess positions (vertices) must be there always
     vertices = geometry['positions']
     
-    if isShared:
-        geometryType = "sharedgeometry"
-    else:
-        geometryType = "geometry"
+    geometryType = "geometry"
     
     isNormals = False
     if 'normals' in geometry:    
@@ -502,21 +501,17 @@ def xSaveGeometry(geometry, xDoc, xMesh, isShared):
             xUVSet.setAttribute("v", toFmtStr(1.0 - uvSets[i][0][1]))            
             xVertex.appendChild(xUVSet)
             
-def xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry):
+def xSaveSubMeshes(meshData, xDoc, xMesh):
             
     xSubMeshes = xDoc.createElement("submeshes")
     xMesh.appendChild(xSubMeshes)
     
     for submesh in meshData['submeshes']:
                 
-        numVerts = len(submesh['geometry']['positions'])
-        
         xSubMesh = xDoc.createElement("submesh")
         xSubMesh.setAttribute("material", submesh['material'])
-        if hasSharedGeometry:
-            xSubMesh.setAttribute("usesharedvertices", "true")
-        else:
-            xSubMesh.setAttribute("usesharedvertices", "false")
+        numVerts = len(submesh['geometry']['positions'])
+        xSubMesh.setAttribute("usesharedvertices", "false")
         xSubMesh.setAttribute("use32bitindexes", str(bool(numVerts > 65535)))   
         xSubMesh.setAttribute("operationtype", "triangle_list")  
         xSubMeshes.appendChild(xSubMesh)
@@ -535,30 +530,33 @@ def xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry):
         # if there is geometry per sub mesh
         if 'geometry' in submesh:
             geometry = submesh['geometry']
-            xSaveGeometry(geometry, xDoc, xSubMesh, hasSharedGeometry)
-        # boneassignments
-        if 'skeleton' in meshData:
-            skelMeshData = meshData['skeleton']
-            xBoneAssignments = xDoc.createElement("boneassignments")
-            #print(submesh['geometry']['boneassignments'][0])
-            for vxIdx, vxBoneAsg in enumerate(submesh['geometry']['boneassignments']):
-                #print(submesh['geometry']['boneassignments'][vxIdx])
-                #print(vxBoneAsg)
-                for boneAndWeight in vxBoneAsg:
-                    #print(boneAndWeight)
-                    boneName = boneAndWeight[0]
-                    boneWeight = boneAndWeight[1]
-                    xVxBoneassignment = xDoc.createElement("vertexboneassignment")
-                    xVxBoneassignment.setAttribute("vertexindex", str(vxIdx))
-                    #print(boneName)
-                    boneNameToId = skelMeshData['boneIDs']
-                    #print(skelMeshData['boneIDs'])
-                    #print(boneNameToId[boneName])
-                    xVxBoneassignment.setAttribute("boneindex", str(skelMeshData['boneIDs'][boneName]))
-                    xVxBoneassignment.setAttribute("weight", '%6f' % boneWeight)
-                    xBoneAssignments.appendChild(xVxBoneassignment)
-            xSubMesh.appendChild(xBoneAssignments)
-            
+            xSaveGeometry(geometry, xDoc, xSubMesh)
+            # submesh boneassignments
+            if 'boneassignments' in submesh['geometry']:
+                xBoneAssignments = xGetBoneAssignments(meshData, xDoc, submesh['geometry']['boneassignments'])
+                xSubMesh.appendChild(xBoneAssignments)
+
+def xGetBoneAssignments(meshData, xDoc, boneAssignments):
+    if 'skeleton' in meshData:
+        skelMeshData = meshData['skeleton']
+        xBoneAssignments = xDoc.createElement("boneassignments")
+        #print(submesh['geometry']['boneassignments'][0])
+        for vxIdx, vxBoneAsg in enumerate(boneAssignments):
+            for boneAndWeight in vxBoneAsg:
+                #print(boneAndWeight)
+                boneName = boneAndWeight[0]
+                boneWeight = boneAndWeight[1]
+                xVxBoneassignment = xDoc.createElement("vertexboneassignment")
+                xVxBoneassignment.setAttribute("vertexindex", str(vxIdx))
+                #print(boneName)
+                boneNameToId = skelMeshData['boneIDs']
+                #print(skelMeshData['boneIDs'])
+                #print(boneNameToId[boneName])
+                xVxBoneassignment.setAttribute("boneindex", str(skelMeshData['boneIDs'][boneName]))
+                xVxBoneassignment.setAttribute("weight", '%6f' % boneWeight)
+                xBoneAssignments.appendChild(xVxBoneassignment)
+        return xBoneAssignments
+
 def xSaveSkeletonData(blenderMeshData, filepath):
     if 'skeleton' in blenderMeshData:
         skelData = blenderMeshData['skeleton']
@@ -576,21 +574,13 @@ def xSaveSkeletonData(blenderMeshData, filepath):
 def xSaveMeshData(meshData, filepath, export_and_link_skeleton):    
     from xml.dom.minidom import Document
     
-    hasSharedGeometry = False
-    if 'sharedgeometry' in meshData:
-        hasSharedGeometry = True
-        
     # Create the minidom document
     xDoc = Document()
     
     xMesh = xDoc.createElement("mesh")
     xDoc.appendChild(xMesh)
     
-    if hasSharedGeometry:
-        geometry = meshData['sharedgeometry']
-        xSaveGeometry(geometry, xDoc, xMesh, hasSharedGeometry)
-    
-    xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry)
+    xSaveSubMeshes(meshData, xDoc, xMesh)
     
     #skeleton link only
     if 'skeleton' in meshData:
@@ -649,10 +639,11 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
             fileWr.write(indent(3) + "specular %f %f %f 0\n" % (matInfo['specular'][0], matInfo['specular'][1], matInfo['specular'][2]))
             fileWr.write(indent(3) + "emissive %f %f %f\n" % (matInfo['emissive'][0], matInfo['emissive'][1], matInfo['emissive'][2]))
             
-            if 'texture' in matInfo:
-                fileWr.write(indent(3) + "texture_unit\n" + indent(3) + "{\n")
-                fileWr.write(indent(4) + "texture %s\n" % matInfo['texture'])
-                fileWr.write(indent(3) + "}\n") # texture unit
+            if 'textures' in matInfo:
+                for texInfo in matInfo['textures']:
+                    fileWr.write(indent(3) + "texture_unit\n" + indent(3) + "{\n")
+                    fileWr.write(indent(4) + "texture %s\n" % texInfo['texture'])
+                    fileWr.write(indent(3) + "}\n") # texture unit
             
             fileWr.write(indent(2) + "}\n") # pass
             fileWr.write(indent(1) + "}\n") # technique
@@ -698,6 +689,137 @@ def getVertexIndex(vertexInfo, vertexList):
     return len(vertexList)-1
 
 def bCollectMeshData(meshData, selectedObjects, applyModifiers):
+
+    for ob in selectedObjects:
+        #ob = bpy.types.Object ##
+        materials = []
+        for mat in ob.data.materials:
+            if mat:
+                materials.append( mat )
+            else:
+                print('[WARNING:] Bad material data in', ob)
+                materials.append( '_missing_material_' ) # borrowed from ogre scene exporter
+
+        if not materials:
+            materials.append( '_missing_material_' )
+        _sm_faces_ = []
+        _sm_verts_ = []
+        for matidx, mat in enumerate( materials ):
+            _sm_faces_.append([])
+            _sm_verts_.append([])
+
+        #mesh = bpy.types.Mesh ##
+        if applyModifiers:        
+            mesh = ob.to_mesh(bpy.context.scene, True, 'PREVIEW')
+        else:
+            mesh = ob.data     
+
+        # blender 2.62 <-> 2.63 compatibility
+        if(blender_version<=262):
+            meshFaces = mesh.faces
+            meshUV_textures = mesh.uv_textures
+            meshVertex_colors = mesh.vertex_colors
+        elif(blender_version>262): 
+            mesh.update(calc_tessface=True)            
+            meshFaces = mesh.tessfaces
+            meshUV_textures = mesh.tessface_uv_textures 
+            meshVertex_colors = mesh.tessface_vertex_colors
+    
+        # first try to collect UV data
+        uvData = []
+        hasUVData = False
+        if meshUV_textures.active:
+            hasUVData = True
+            for layer in meshUV_textures:
+                faceIdxToUVdata = {}
+                for fidx, uvface in enumerate(layer.data):               
+                    faceIdxToUVdata[fidx] = uvface.uv
+                uvData.append(faceIdxToUVdata)
+
+        for fidx, F in enumerate(meshFaces):
+            smooth = F.use_smooth
+            faces = _sm_faces_[ F.material_index ]
+            # Ogre only supports triangles
+            tris = []
+            tris.append( (F.vertices[0], F.vertices[1], F.vertices[2]) )
+            if len(F.vertices) >= 4: tris.append( (F.vertices[0], F.vertices[2], F.vertices[3]) )
+            for tidx, tri in enumerate(tris):
+                newFaceVx = []
+                for vidx, idx in enumerate(tri):
+                    vxOb = mesh.vertices[ idx ]
+                    u = 0
+                    v = 0
+                    if hasUVData:
+                        uv = uvData[0][fidx][ list(tri).index(idx) ] #take 1st layer only
+                        u = uv[0]
+                        v = uv[1]
+
+                    if smooth:
+                        nx = vxOb.normal[0] 
+                        ny = vxOb.normal[1]
+                        nz = vxOb.normal[2]
+                    else:
+                        nx = F.normal[0] 
+                        ny = F.normal[1]
+                        nz = F.normal[2]
+
+                    px = vxOb.co[0]
+                    py = vxOb.co[1]
+                    pz = vxOb.co[2]
+
+                    #vertex groups
+                    boneWeights = {}
+                    for vxGroup in vxOb.groups:
+                        if vxGroup.weight > 0.01:
+                            vg = ob.vertex_groups[ vxGroup.group ]
+                            boneWeights[vg.name]=vxGroup.weight
+
+                    vert = VertexInfo(px,py,pz,nx,ny,nz,u,v,boneWeights)
+                    newVxIdx = getVertexIndex(vert, _sm_verts_[ F.material_index ])
+                    newFaceVx.append(newVxIdx)
+
+                faces.append(newFaceVx)
+
+
+    meshData['submeshes'] = []
+    for matidx, mat in enumerate( materials ):
+        normals = []
+        positions = []
+        uvTex = []
+        boneAssignments = []
+
+        #vertex groups of object
+        for vxInfo in _sm_verts_[matidx]:
+            positions.append([vxInfo.px, vxInfo.py, vxInfo.pz])
+            normals.append([vxInfo.nx, vxInfo.ny, vxInfo.nz])
+            uvTex.append([[vxInfo.u, vxInfo.v]])
+            
+            boneWeights = []
+            for boneW in vxInfo.boneWeights.keys():
+                boneWeights.append([boneW, vxInfo.boneWeights[boneW]])
+            boneAssignments.append(boneWeights)            
+
+
+        subMeshData = {}
+        subMeshData['geometry'] = {}
+        subMeshData['geometry']['positions'] = positions
+        subMeshData['geometry']['normals'] = normals
+        subMeshData['geometry']['texcoordsets'] = len(mesh.uv_textures)
+
+        if hasUVData:
+            subMeshData['geometry']['uvsets'] = uvTex
+                
+        #need bone name to bone ID dict
+        subMeshData['geometry']['boneassignments'] = boneAssignments
+
+        subMeshData['material'] = mat.name
+        subMeshData['faces'] = _sm_faces_[matidx]
+        meshData['submeshes'].append(subMeshData)
+
+    return meshData
+
+
+def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers):
     
     subMeshesData = []
     for ob in selectedObjects:             
@@ -728,12 +850,10 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers):
         hasUVData = False
         if meshUV_textures.active:
             hasUVData = True
-            #uvLayerTofaceUVdata = {}
             for layer in meshUV_textures:
                 faceIdxToUVdata = {}
                 for fidx, uvface in enumerate(layer.data):               
                     faceIdxToUVdata[fidx] = uvface.uv
-                #uvData[layer]=faceIdxToUVdata
                 uvData.append(faceIdxToUVdata)
                       
         vertexList = []        
@@ -828,6 +948,7 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers):
         subMeshData['material'] = materialName
         subMeshData['faces'] = faces
         subMeshData['geometry'] = geometry
+
         subMeshesData.append(subMeshData)
         
         # if mesh was newly created with modifiers, remove the mesh
@@ -891,22 +1012,28 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                     matInfo['emissive']=[mat.emit,mat.emit,mat.emit]                    
                     # texture
                     if len(mat.texture_slots)>0:
-                        if mat.texture_slots[0].texture:
-                            if mat.texture_slots[0].texture.type == 'IMAGE':
-                                #print('\t\t XXXX:', mat.texture_slots[0].texture.type)
-                                matInfo['texture'] = mat.texture_slots[0].texture.image.name
-                                matInfo['texture_path'] = mat.texture_slots[0].texture.image.filepath
+                        matInfo['textures'] = []
+                        for s in mat.texture_slots:
+                            if s and s.texture.type == 'IMAGE':
+                                    texInfo = {}
+                                    texInfo['texture'] = s.texture.image.name
+                                    texInfo['texture_path'] = s.texture.image.filepath
+                                    matInfo['textures'].append(texInfo)
     
     
 def SaveMesh(filepath, selectedObjects, ogreXMLconverter, applyModifiers,
-              overrideMaterialFlag, copyTextures, export_and_link_skeleton, keep_xml):
+              overrideMaterialFlag, copyTextures, export_and_link_skeleton, keep_xml, enable_by_material):
     
     blenderMeshData = {}
     
     #skeleton
     bCollectSkeletonData(blenderMeshData, selectedObjects) 
     #mesh
-    bCollectMeshData(blenderMeshData, selectedObjects, applyModifiers)
+    if enable_by_material:
+        bCollectMeshData(blenderMeshData, selectedObjects, applyModifiers)
+    else:
+        bCollectMeshDataOriginal(blenderMeshData, selectedObjects, applyModifiers)
+
     #materials
     bCollectMaterialData(blenderMeshData, selectedObjects)
     
@@ -954,6 +1081,7 @@ def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
 
 def save(operator, context, filepath,       
          ogreXMLconverter=None,
+         enable_by_material=False,
          keep_xml=DEFAULT_KEEP_XML,
          apply_transform=True,
          apply_modifiers=True,
@@ -992,7 +1120,7 @@ def save(operator, context, filepath,
         return ('CANCELLED')
         
     SaveMesh(filepath, selectedObjects, ogreXMLconverter, apply_modifiers,
-              overwrite_material, copy_textures, export_and_link_skeleton, keep_xml)
+              overwrite_material, copy_textures, export_and_link_skeleton, keep_xml, enable_by_material)
     
     
     print("done.")

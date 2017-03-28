@@ -19,10 +19,10 @@
 # <pep8-80 compliant>
 
 """
-Name: 'OGRE for Torchlight (*.MESH)'
+Name: 'OGRE for Torchlight 2(*.MESH)'
 Blender: 2.59 and 2.62
 Group: 'Import/Export'
-Tooltip: 'Import/Export Torchlight OGRE mesh files'
+Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
     
 Author: Dusho
 
@@ -32,7 +32,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Dusho"
-__version__ = "0.6.2 09-Mar-2013"
+__version__ = "0.6.4 25-Mar-2017"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -51,6 +51,8 @@ Known issues:<br>
     * imported materials will loose certain informations not applicable to Blender when exported
      
 History:<br>
+    * v0.6.4   (25-Mar-2017) - BUGFIX: By material was breaking armor sets
+    * v0.6.3   (01-Jan-2017) - I'm not Dusho, but I added ability to export multiple materials and textures on a single mesh.
     * v0.6.2   (09-Mar-2013) - bug fixes (working with materials+textures), added 'Apply modifiers' and 'Copy textures'
     * v0.6.1   (27-Sep-2012) - updated to work with Blender 2.63a
     * v0.6     (01-Sep-2012) - added skeleton import + vertex weights import/export
@@ -64,12 +66,12 @@ History:<br>
 """
 
 bl_info = {
-    "name": "Torchlight MESH format",
+    "name": "Torchlight 2 MESH format",
     "author": "Dusho",
     "blender": (2, 5, 9),
     "api": 35622,
     "location": "File > Import-Export",
-    "description": ("Import-Export Torchlight Model, Import MESH, UV's, "
+    "description": ("Import-Export Torchlight 2 Model, Import MESH, UV's, "
                     "materials and textures"),
     "warning": "",
     "wiki_url": (""),
@@ -85,7 +87,7 @@ if "bpy" in locals():
         imp.reload(TLExport)
 
 # Path for your OgreXmlConverter
-OGRE_XML_CONVERTER = "D:\stuff\Torchlight_modding\orge_tools\OgreXmlConverter.exe"
+OGRE_XML_CONVERTER = "C:\OgreCommandLineTools\OgreXmlConverter.exe"
 
 import bpy
 from bpy.props import (BoolProperty,
@@ -142,6 +144,12 @@ class ExportTL(bpy.types.Operator, ExportHelper):
     bl_options = {'PRESET'}
 
     filename_ext = ".mesh"
+
+    enable_by_material = BoolProperty(
+            name="Enable By Material",
+            description="Multiple materials on a mesh will be exported as submeshes.",
+            default=False,
+            )
     
     keep_xml = BoolProperty(
             name="Keep XML",
@@ -198,6 +206,9 @@ class ExportTL(bpy.types.Operator, ExportHelper):
     def draw(self, context):
         layout = self.layout
         
+        row = layout.row(align=True)
+        row.prop(self, "enable_by_material")
+
         row = layout.row(align=True)
         row.prop(self, "keep_xml")
         
