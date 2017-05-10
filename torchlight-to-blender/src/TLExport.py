@@ -33,6 +33,7 @@ Known issues:<br>
     * imported materials will loose certain informations not applicable to Blender when exported
      
 History:<br>
+    * v0.6.5   (09-May-2017) - BUGFIX: Mesh with no bone assignment would not export.
     * v0.6.4   (25-Mar-2017) - BUGFIX: By material was breaking armor sets
     * v0.6.3   (01-Jan-2017) - I'm not Dusho, but I added ability to export multiple materials and textures on a single mesh.
     * v0.6.2   (09-Mar-2013) - bug fixes (working with materials+textures), added 'Apply modifiers' and 'Copy textures'
@@ -534,7 +535,8 @@ def xSaveSubMeshes(meshData, xDoc, xMesh):
             # submesh boneassignments
             if 'boneassignments' in submesh['geometry']:
                 xBoneAssignments = xGetBoneAssignments(meshData, xDoc, submesh['geometry']['boneassignments'])
-                xSubMesh.appendChild(xBoneAssignments)
+                if xBoneAssignments is not None:
+                    xSubMesh.appendChild(xBoneAssignments)
 
 def xGetBoneAssignments(meshData, xDoc, boneAssignments):
     if 'skeleton' in meshData:
