@@ -2,7 +2,7 @@
 
 """
 Name: 'OGRE for Torchlight (*.MESH)'
-Blender: 2.59, 2.62, 2.63a
+Blender: 2.59, 2.62, 2.63a, 2.77a
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight OGRE mesh files'
     
@@ -13,8 +13,8 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 
 """
 
-__author__ = "Dusho"
-__version__ = "0.6.2 09-Mar-2013"
+__author__ = "someone"
+__version__ = "0.7.1 07-Sep-2016"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -23,16 +23,20 @@ Supported:<br>
     * import/export of basic meshes
     * import of skeleton
     * import/export of vertex weights (ability to import characters and adjust rigs)
+    * export of vertex colour (RGB)
+    * Calculation of tangents and binormals for export
 
 Missing:<br>   
     * skeletons (export)
     * animations
-    * vertex color export
+    * shape keys
 
 Known issues:<br>
     * imported materials will loose certain informations not applicable to Blender when exported
      
 History:<br>
+    * v0.7.1   (07-Sep-2016) - bug fixes
+    * v0.7.0   (02-Sep-2016) - Persistant Ogre bone IDs, Export vertex colours. Generates tangents and binormals.
     * v0.6.2   (09-Mar-2013) - bug fixes (working with materials+textures), added 'Apply modifiers' and 'Copy textures'
     * v0.6.1   (27-Sep-2012) - updated to work with Blender 2.63a
     * v0.6     (01-Sep-2012) - added skeleton import + vertex weights import/export
@@ -77,7 +81,9 @@ MESHDATA:
         ['parent'] - bone name of parent bone
         ['children'] - list with names if children ([child1, child2, ...])
 ['boneIDs']: {[bone ID]:[bone Name]} - dictionary with ID to name
-    
+['skeletonName'] - name of skeleton
+
+Note: Bones store their OGREID as a custom variable so they are consistent when a mesh is exported
 """
 
 #from Blender import *
@@ -86,14 +92,13 @@ import bpy
 from mathutils import Vector, Matrix
 import math
 import os
+import subprocess
 
 SHOW_IMPORT_DUMPS = False
 SHOW_IMPORT_TRACE = False
 DEFAULT_KEEP_XML = False
 # default blender version of script
 blender_version = 259
-
-#ogreXMLconverter=None
 
 # makes sure name doesn't exceeds blender naming limits
 # also keeps after name (as Torchlight uses names to identify types -boots, chest, ...- with names)
@@ -123,15 +128,6 @@ def GetValidBlenderName(name):
         print("WARNING: Name truncated (" + name + " -> " + newname + ")")
             
     return newname
-
-def fileExist(filepath):
-    try:
-        filein = open(filepath)
-        filein.close()
-        return True
-    except:
-        print ("No file: ", filepath)
-        return False
 
 def xOpenFile(filename):
     xml_file = open(filename)    
@@ -215,20 +211,22 @@ def xCollectVertexData(data):
 
 def xCollectMeshData(meshData, xmldoc, meshname, dirname):
     #global has_skeleton
-    #meshData = {}
     faceslist = []
     subMeshData = []
     allObjs = []
     isSharedGeometry = False
     sharedGeom = []
-    
+    hasSkeleton = 'skeleton' in meshData
+
     # collect shared geometry    
     if(len(xmldoc.getElementsByTagName('sharedgeometry')) > 0):
         isSharedGeometry = True
         for subnodes in xmldoc.getElementsByTagName('sharedgeometry'):
             meshData['sharedgeometry'] = xCollectVertexData(subnodes)
-        for subnodes in xmldoc.getElementsByTagName('boneassignments'): # TODO: will store just last?
-            meshData['sharedgeometry']['boneassignments'] = xCollectBoneAssignments(meshData, subnodes)
+
+        if hasSkeleton:
+            for subnodes in xmldoc.getElementsByTagName('boneassignments'):
+                meshData['sharedgeometry']['boneassignments'] = xCollectBoneAssignments(meshData, subnodes)
             
     # collect submeshes data       
     for submeshes in xmldoc.getElementsByTagName('submeshes'):
@@ -252,8 +250,8 @@ def xCollectMeshData(meshData, xmldoc, meshname, dirname):
                     if (subnodes.localName == 'geometry'):
                         vertexcount = int(subnodes.getAttributeNode('vertexcount').value)
                         sm['geometry']=xCollectVertexData(subnodes)
-                                                                   
-                    if subnodes.localName == 'boneassignments' and isSharedGeometry==False:
+
+                    if hasSkeleton and subnodes.localName == 'boneassignments' and isSharedGeometry==False:
                         sm['geometry']['boneassignments']=xCollectBoneAssignments(meshData, subnodes)
 #                       
                         
@@ -433,7 +431,7 @@ def xGetSkeletonLink(xmldoc, folder):
         skeleton_link = xmldoc.getElementsByTagName("skeletonlink")[0]
         skeletonFile = os.path.join(folder, skeleton_link.getAttribute("name"))
         # check for existence of skeleton file
-        if fileExist(skeletonFile)==False:
+        if not os.path.isfile(skeletonFile):
             skeletonFile = "None"
         
     return skeletonFile
@@ -668,7 +666,9 @@ def calcBoneLength(vec):
 def bCreateMesh(meshData, folder, name, filepath):
     
     if 'skeleton' in meshData:
-        bCreateSkeleton(meshData, name)
+        skeletonName = meshData['skeletonName']
+        bCreateSkeleton(meshData, skeletonName)
+
     # from collected data create all sub meshes
     subObjs = bCreateSubMeshes(meshData, name)
     # skin submeshes
@@ -709,6 +709,12 @@ def bCreateSkeleton(meshData, name):
         
         children = boneData['children']
         boneObj = amt.edit_bones.new(boneName)
+
+        # Store Ogre bone id to match when exporting
+        if 'id' in boneData:
+            boneObj['OGREID'] = boneData['id']
+            print('bone', boneData['id'], boneName)
+
         #boneObj.head = boneData['posHAS']
         #headPos = boneData['posHAS']
         headPos = boneData['posHAS']
@@ -924,55 +930,39 @@ def bCreateSubMeshes(meshData, meshName):
             #print(me.uv_textures[0].data.values()[0].image)       
             
         # texture coordinates
-        if 'texcoordsets' in geometry:
+        if 'texcoordsets' in geometry and 'uvsets' in geometry:
+            uvsets = geometry['uvsets']
             for j in range(geometry['texcoordsets']):                
                 uvLayer = meshUV_textures.new('UVLayer'+str(j))
                 
                 meshUV_textures.active = uvLayer
             
-                for f in meshFaces:    
-                    if 'uvsets' in geometry:
-                        uvco1sets = geometry['uvsets'][f.vertices[0]]
-                        uvco2sets = geometry['uvsets'][f.vertices[1]]
-                        uvco3sets = geometry['uvsets'][f.vertices[2]]
-                        uvco1 = Vector((uvco1sets[j][0],uvco1sets[j][1]))
-                        uvco2 = Vector((uvco2sets[j][0],uvco2sets[j][1]))
-                        uvco3 = Vector((uvco3sets[j][0],uvco3sets[j][1]))
-                        uvLayer.data[f.index].uv = (uvco1,uvco2,uvco3)
-                        if hasTexture:
-                            # this will link image to faces
-                            uvLayer.data[f.index].image=tex.image
-                            #uvLayer.data[f.index].use_image=True
+                for f in meshFaces:
+                    uvco1sets = uvsets[f.vertices[0]]
+                    uvco2sets = uvsets[f.vertices[1]]
+                    uvco3sets = uvsets[f.vertices[2]]
+                    uvco1 = Vector((uvco1sets[j][0],uvco1sets[j][1]))
+                    uvco2 = Vector((uvco2sets[j][0],uvco2sets[j][1]))
+                    uvco3 = Vector((uvco3sets[j][0],uvco3sets[j][1]))
+                    uvLayer.data[f.index].uv = (uvco1,uvco2,uvco3)
+                    if hasTexture:
+                        # this will link image to faces
+                        uvLayer.data[f.index].image=tex.image
+                        #uvLayer.data[f.index].use_image=True
         
         # vertex colors 
         if 'vertexcolors' in geometry:
-            #for j in range(geometry['texcoordsets']):                
             colorLayer = meshVertex_colors.new('ColorLayer')            
             meshVertex_colors.active = colorLayer
             vcolors = geometry['vertexcolors'] 
             for f in meshFaces:    
-                if 'uvsets' in geometry:                    
-                    colv1 = vcolors[f.vertices[0]]
-                    colv2 = vcolors[f.vertices[1]]
-                    colv3 = vcolors[f.vertices[2]]                    
-                    colorLayer.data[f.index].color1 = (colv1[0],colv1[1],colv1[2])
-                    colorLayer.data[f.index].color2 = (colv2[0],colv2[1],colv2[2])
-                    colorLayer.data[f.index].color3 = (colv3[0],colv3[1],colv3[2])
+                colv1 = vcolors[f.vertices[0]]
+                colv2 = vcolors[f.vertices[1]]
+                colv3 = vcolors[f.vertices[2]]                    
+                colorLayer.data[f.index].color1 = (colv1[0],colv1[1],colv1[2])
+                colorLayer.data[f.index].color2 = (colv2[0],colv2[1],colv2[2])
+                colorLayer.data[f.index].color3 = (colv3[0],colv3[1],colv3[2])
                                         
-#        # this probably doesn't work
-#        # vertex colors               
-#        if 'vertexcolors' in geometry:
-#            #me.vertex_colors = True        
-#            vcolors = geometry['vertexcolors']        
-#            for f in me.faces:
-#                for k,v in enumerate(f.vertices):
-#                    col = f.col[k]
-#                    vcol = vcolors[k]
-#                    col.r = int(vcol[0]*255)
-#                    col.g = int(vcol[1]*255)
-#                    col.b = int(vcol[2]*255)
-#                    col.a = int(vcol[3]*255)
-        
         # bone assignments:
         if 'skeleton' in meshData:
             if 'boneassignments' in geometry.keys():
@@ -984,8 +974,9 @@ def bCreateSubMeshes(meshData, meshName):
                         grp.add([v], w, 'REPLACE')
             # Give mesh object an armature modifier, using vertex groups but
             # not envelopes
-            mod = ob.modifiers.new('MyRigModif', 'ARMATURE')
-            mod.object = bpy.data.objects[meshName] # gets the rig object
+            skeletonName = meshData['skeletonName']
+            mod = ob.modifiers.new('OgreSkeleton', 'ARMATURE')
+            mod.object = bpy.data.objects[skeletonName] # gets the rig object
             mod.use_bone_envelopes = False
             mod.use_vertex_groups = True
         
@@ -1008,36 +999,45 @@ def bCreateSubMeshes(meshData, meshName):
             area.spaces.active.viewport_shade='TEXTURED'
     
     return allObjects
-        
 
-def load(operator, context, filepath,       
-         ogreXMLconverter=None,
-         keep_xml=DEFAULT_KEEP_XML,):
-    
+def convertXML(convertor, filename, use_existing = True):
+    print('create xml', filename)
+    if filename.endswith('.xml'):
+        return True
+    elif use_existing and os.path.isfile(filename + '.xml'):
+        return True
+    elif convertor is None:
+        return False
+    else:
+        print("Execute: ", convertor, '-q', filename)
+        try:
+            subprocess.call([convertor, '-q', filename])
+            return os.path.isfile(filename + '.xml')
+        except:
+            print("Error: Could not run", convertor)
+            return False
+
+def load(operator, context, filepath, xml_converter=None, keep_xml=True):
     global blender_version
     
     blender_version = bpy.app.version[0]*100 + bpy.app.version[1]
         
-    print("loading...")
-    print(str(filepath))    
-    
-    #meshfilename = os.path.split(filepath)[1].lower()      
-    #name = "mesh"
-    #files = []
-    #materialFile = "None"
-        
-    filepath = filepath.lower()
+    print("loading", str(filepath))
+
+    filepath = filepath
     pathMeshXml = filepath  
     # get the mesh as .xml file
-    if (".mesh" in filepath):
-        if (".xml" not in filepath):
-            os.system('%s "%s"' % (ogreXMLconverter, filepath))
+    if ".mesh" in filepath:
+        if convertXML(xml_converter, filepath):
             pathMeshXml = filepath + ".xml"
+        else:
+            operator.report( {'ERROR'}, "Failed to convert .mesh files to .xml")
+            return {'CANCELLED'}
     else:
-        return('CANCELLED')
+        return {'CANCELLED'}
     
     folder = os.path.split(filepath)[0]    
-    nameDotMeshDotXml = os.path.split(pathMeshXml)[1].lower()
+    nameDotMeshDotXml = os.path.split(pathMeshXml)[1]
     nameDotMesh = os.path.splitext(nameDotMeshDotXml)[0]
     onlyName = os.path.splitext(nameDotMesh)[0] 
                 
@@ -1045,7 +1045,7 @@ def load(operator, context, filepath,
     meshMaterials = []
     nameDotMaterial = onlyName + ".material"
     pathMaterial = os.path.join(folder, nameDotMaterial)
-    if fileExist(pathMaterial)==False:
+    if not os.path.isfile(pathMaterial):
         # search directory for .material    
         for filename in os.listdir(folder):
             if ".material" in filename:
@@ -1066,15 +1066,19 @@ def load(operator, context, filepath,
         skeletonFile = xGetSkeletonLink(xDocMeshData, folder)
         # there is valid skeleton link and existing file
         if(skeletonFile!="None"):
-            skeletonFileXml = skeletonFile + ".xml"
-            # if there isn't .xml file yet, convert the skeleton file
-            if(not os.path.isfile(skeletonFileXml)):
-                os.system('%s "%s"' % (ogreXMLconverter, skeletonFile))                
+            if convertXML(xml_converter, skeletonFile):
+                skeletonFileXml = skeletonFile + ".xml"
+
             # parse .xml skeleton file
             xDocSkeletonData = xOpenFile(skeletonFileXml)    
             if xDocSkeletonData != "None":
                 xCollectBoneData(meshData, xDocSkeletonData)
-        
+                meshData['skeletonName'] = os.path.basename(skeletonFile[:-9])
+
+            else:
+                operator.report( {'WARNING'}, "Failed to load linked skeleton")
+                print("Failed to load linked skeleton")        
+
         # collect mesh data
         print("collecting mesh data...")
         xCollectMeshData(meshData, xDocMeshData, onlyName, folder)    
@@ -1096,50 +1100,8 @@ def load(operator, context, filepath,
         print("nameDotMeshDotXml: %s" % nameDotMeshDotXml)
         print("onlyName: %s" % onlyName)
         print("nameDotMaterial: %s" % nameDotMaterial)
-        print("pathMaterial: %s" % pathMaterial)    
-        print("ogreXMLconverter: %s" % ogreXMLconverter)
-        
-#    if(ogreXMLconverter is not None):
-#        # convert MESH and SKELETON file to MESH.XML and SKELETON.XML respectively
-#        for filename in os.listdir(folder):
-#            # we're going to do string comparisons. assume lower case to simplify code
-#            filename = os.path.join(folder, filename.lower())
-#            # process .mesh and .skeleton files while skipping .xml files
-#            if (".mesh" in filename) and (".xml" not in filename):
-#                os.system('%s "%s"' % (ogreXMLconverter, filename))
-#            
-#    # get all the filenames in the chosen directory, put in list and sort it
-#    for filename in os.listdir(folder):
-#        # we're going to do string comparisons. assume lower case to simplify code
-#        filename = filename.lower()
-#        # process .mesh and .skeleton files while skipping .xml files
-#        if ".skeleton.xml" in filename:
-#            files.append(os.path.join(folder, filename))
-#        elif (".mesh.xml" in filename) and (meshfilename in filename):
-#            print (meshfilename)
-#            # get the name of the MESH file without extension. Use this base name to name our imported object
-#            name = filename.split('.')[0]
-#            # to avoid Blender naming limit problems
-#            name = GetValidBlenderName(name)
-#            # put MESH file on top of the file list
-#            files.insert(0, os.path.join(folder, filename))
-#        elif ".material" in filename:
-#            # material file
-#            materialFile = os.path.join(folder, filename)
-#
-#    # now that we have a list of files, process them
-#    filename = files[0]
-#    
-#    #filename = filepath.lower()
-#    # import the mesh
-#    if (".mesh" in filename):
-#        mesh_data = xOpenFile(filename)
-#        if mesh_data != "None":
-#            #CreateSkeleton(mesh_data, folder, name)
-#            CreateMesh(mesh_data, folder, name, materialFile, filepath)
-#            if not keep_xml:
-#                # cleanup by deleting the XML file we created
-#                os.unlink("%s" % filename)
+        print("pathMaterial: %s" % pathMaterial)
+        print("ogreXMLconverter: %s" % xml_converter)        
     
     print("done.")
     return {'FINISHED'}

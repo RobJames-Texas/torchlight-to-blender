@@ -13,8 +13,8 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 
 """
 
-__author__ = "Dusho"
-__version__ = "0.6.5 09-May-2017"
+__author__ = "someone"
+__version__ = "0.7.1 09-May-2017"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -23,16 +23,20 @@ Supported:<br>
     * import/export of basic meshes
     * import of skeleton
     * import/export of vertex weights (ability to import characters and adjust rigs)
+    * export of vertex colour (RGB)
+    * Calculation of tangents and binormals for export
 
 Missing:<br>   
     * skeletons (export)
     * animations
-    * vertex color export
+    * shape keys
 
 Known issues:<br>
     * imported materials will loose certain informations not applicable to Blender when exported
      
 History:<br>
+    * v0.7.1   (07-Sep-2016) - bug fixes
+    * v0.7.0   (02-Sep-2016) - Persistant Ogre bone IDs, Export vertex colours. Generates tangents and binormals.
     * v0.6.5   (09-May-2017) - BUGFIX: Mesh with no bone assignment would not export.
     * v0.6.4   (25-Mar-2017) - BUGFIX: By material was breaking armor sets
     * v0.6.3   (01-Jan-2017) - I'm not Dusho, but I added ability to export multiple materials and textures on a single mesh.
@@ -52,20 +56,23 @@ History:<br>
 from xml.dom import minidom
 import bpy
 from mathutils import Vector, Matrix
-#import math
+import math
 import os
+import subprocess
 import shutil
 
 SHOW_EXPORT_DUMPS = False
 SHOW_EXPORT_TRACE = False
 SHOW_EXPORT_TRACE_VX = False
-DEFAULT_KEEP_XML = True
 
 # default blender version of script
 blender_version = 259
 
+def hash_combine(x, y):
+    return x ^ y + 0x9e3779b9 + (x<<6) + (x>>2)
+
 class VertexInfo(object):
-    def __init__(self, px,py,pz, nx,ny,nz, u,v,boneWeights):        
+    def __init__(self, px,py,pz, nx,ny,nz, u,v, r,g,b, boneWeights):
         self.px = px
         self.py = py
         self.pz = pz
@@ -74,6 +81,9 @@ class VertexInfo(object):
         self.nz = nz        
         self.u = u
         self.v = v
+        self.r = r
+        self.g = g
+        self.b = b
         self.boneWeights = boneWeights        
         
 
@@ -82,11 +92,26 @@ class VertexInfo(object):
         if self.nx != o.nx or self.ny != o.ny or self.nz != o.nz: return False 
         elif self.px != o.px or self.py != o.py or self.pz != o.pz: return False
         elif self.u != o.u or self.v != o.v: return False
+        elif self.r != o.r or self.g != o.g or self.b != o.b: return False
         return True
     
-#    def __hash__(self):
+    def __hash__(self):
 #        return hash(self.px) ^ hash(self.py) ^ hash(self.pz) ^ hash(self.nx) ^ hash(self.ny) ^ hash(self.nz)
-#        
+
+        result = hash(self.px)
+        result = hash_combine( result, hash(self.py) )
+        result = hash_combine( result, hash(self.pz) )
+        result = hash_combine( result, hash(self.nx) )
+        result = hash_combine( result, hash(self.ny) )
+        result = hash_combine( result, hash(self.nz) )
+        result = hash_combine( result, hash(self.u) )
+        result = hash_combine( result, hash(self.v) )
+        result = hash_combine( result, hash(self.r) )
+        result = hash_combine( result, hash(self.g) )
+        result = hash_combine( result, hash(self.b) )
+        return result
+
+
 ########################################
 
 class Bone(object):
@@ -198,6 +223,8 @@ class Skeleton(object):
         self.object = ob
         self.bones = []
         mats = {}
+        ids = {}
+        missing = []
         self.arm = arm = ob.find_armature()
         arm.hide = False
         self._restore_layers = list(arm.layers)
@@ -206,27 +233,34 @@ class Skeleton(object):
         bpy.context.scene.objects.active = arm        # arm needs to be in edit mode to get to .edit_bones
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         bpy.ops.object.mode_set(mode='EDIT', toggle=False)
-        for bone in arm.data.edit_bones: mats[ bone.name ] = bone.matrix.copy()
+        for bone in arm.data.edit_bones:
+            mats[ bone.name ] = bone.matrix.copy()
+            if 'OGREID' in bone: ids[ bone.name ] = bone['OGREID']
+            else: missing.append(bone.name)            
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         #bpy.ops.object.mode_set(mode='POSE', toggle=False)
         bpy.context.scene.objects.active = prev
         
-        # sorting the bones here according to name
-        sortedBoneNames = []
-        for pbone in arm.pose.bones:
-            sortedBoneNames.append(pbone.name)
-        
-        sortedBoneNames.sort(key=None, reverse=False)
-        
-        for i, sbone in enumerate(sortedBoneNames):
-            mybone = Bone( mats[sbone] ,arm.pose.bones[sbone], i, self )
-            self.bones.append( mybone )
+        # Create bones with existing ids
+        self.bones = [None] * len(mats)
+        for bname, bid in ids.items():
+            mybone = Bone( mats[bname], arm.pose.bones[bname], bid, self)
+            self.bones[bid] = mybone
 
-#        for pbone in arm.pose.bones:
-#            mybone = Bone( mats[pbone.name] ,pbone, self )
-#            self.bones.append( mybone )
+        # Create and allocate new ids to bones without ogre ids
+        index = 0
+        missing.sort(key=None, reverse=False)
+        for bname in missing:
+            while self.bones[index] is not None: index += 1
+            mybone = Bone( mats[bname], arm.pose.bones[bname], index, self)
+            self.bones[index] = mybone
 
-#        if arm.name not in Report.armatures: Report.armatures.append( arm.name )
+
+        # print bone list
+        if SHOW_EXPORT_TRACE:
+            for b in self.bones:
+                print(b.id, b.name)
+
 
         # additional transformation for root bones:
         # from armature object space into mesh object space, i.e.,
@@ -468,7 +502,22 @@ def xSaveGeometry(geometry, xDoc, xMesh):
     if texCoordSets>0 and 'uvsets' in geometry:
         isTexCoordsSets = True
         uvSets = geometry['uvsets']
-    
+
+    isColours = False
+    if 'colours' in geometry:
+        isColours = True
+        colours = geometry['colours']
+
+    isTangents = False
+    if 'tangents' in geometry:
+        isTangents = True
+        tangents = geometry['tangents']
+
+    isBinormals = False
+    if 'binormals' in geometry:
+        isBinormals = True
+        binormals = geometry['binormals']
+
     xGeometry = xDoc.createElement(geometryType)
     xGeometry.setAttribute("vertexcount", str(len(vertices)))
     xMesh.appendChild(xGeometry)
@@ -480,6 +529,14 @@ def xSaveGeometry(geometry, xDoc, xMesh):
     if isTexCoordsSets:
         xVertexBuffer.setAttribute("texture_coord_dimensions_0", "2")
         xVertexBuffer.setAttribute("texture_coords", str(texCoordSets))
+
+    if isColours:
+        xVertexBuffer.setAttribute("colours_diffuse", "true")
+    if isTangents:
+        xVertexBuffer.setAttribute("tangents", "true")
+    if isBinormals:
+        xVertexBuffer.setAttribute("binormals", "true")
+
     xGeometry.appendChild(xVertexBuffer)
     
     for i, vx in enumerate(vertices):
@@ -490,18 +547,40 @@ def xSaveGeometry(geometry, xDoc, xMesh):
         xPosition.setAttribute("y", toFmtStr(vx[2]))
         xPosition.setAttribute("z", toFmtStr(-vx[1]))
         xVertex.appendChild(xPosition)
+
         if isNormals:
             xNormal = xDoc.createElement("normal")
             xNormal.setAttribute("x", toFmtStr(normals[i][0]))
             xNormal.setAttribute("y", toFmtStr(normals[i][2]))
             xNormal.setAttribute("z", toFmtStr(-normals[i][1]))
             xVertex.appendChild(xNormal)
+
         if isTexCoordsSets:
             xUVSet = xDoc.createElement("texcoord")
             xUVSet.setAttribute("u", toFmtStr(uvSets[i][0][0])) # take only 1st set for now
             xUVSet.setAttribute("v", toFmtStr(1.0 - uvSets[i][0][1]))            
             xVertex.appendChild(xUVSet)
-            
+
+        if isColours:
+            xColour = xDoc.createElement("colour_diffuse")
+            xColour.setAttribute("value", '%g %g %g, %g' % (colours[i][0], colours[i][1], colours[i][2], 1.0))
+            xVertex.appendChild(xColour)
+
+        if isTangents:
+            xTangent = xDoc.createElement("tangent")
+            xTangent.setAttribute("x", toFmtStr(tangents[i][0]))
+            xTangent.setAttribute("y", toFmtStr(tangents[i][2]))
+            xTangent.setAttribute("z", toFmtStr(-tangents[i][1]))
+            xVertex.appendChild(xTangent)
+
+        if isBinormals:
+            xBinormal = xDoc.createElement("binormal")
+            xBinormal.setAttribute("x", toFmtStr(binormals[i][0]))
+            xBinormal.setAttribute("y", toFmtStr(binormals[i][2]))
+            xBinormal.setAttribute("z", toFmtStr(-binormals[i][1]))
+            xVertex.appendChild(xBinormal)
+
+
 def xSaveSubMeshes(meshData, xDoc, xMesh):
             
     xSubMeshes = xDoc.createElement("submeshes")
@@ -604,29 +683,20 @@ def xSaveMeshData(meshData, filepath, export_and_link_skeleton):
     fileWr.close() 
     
 def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
-    
-    #print("filepath: %s" % filepath)
+    if 'materials' not in meshData: return
+    allMatData = meshData['materials']
+
+    if len(allMatData) <= 0:
+        print('Mesh has no materials')
+        return
+
     matFile = os.path.splitext(filepath)[0] # removing .mesh
-    #print("matFile: %s" % matFile)
-    #matFile = os.path.splitext(matFile)[0] + ".material"
     matFile = matFile + ".material"
     print("material file: %s" % matFile)
-    
-    isMaterial = True
-    try:
-        filein = open(matFile)
-        filein.close()
-    except:
-        #print ("Material: File", matFile, "not found!")
-        isMaterial = False
-    
-    allMatData = meshData['materials']
+    isMaterial = os.path.isfile(matFile)
+
     # if is no material file, or we are forced to overwrite it, write the material file
     if isMaterial==False or overwriteMaterialFlag==True:
-        if 'materials' not in meshData:
-            return
-        if len(meshData['materials'])<=0:
-            return
         # write material        
         fileWr = open(matFile, 'w')        
         for matName, matInfo in allMatData.items():
@@ -653,16 +723,12 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
         
         fileWr.close()
     
-    #print("CopyTextures: %s" % copyTextures)
+    #try to copy material textures to destination
     if copyTextures:
-        #print("CopyTextures: true")
-        #try to copy material textures to destination
         for matName, matInfo in allMatData.items():
             if 'texture' in matInfo:
                 if 'texture_path' in matInfo:
                     srcTextureFile = matInfo['texture_path']
-                    #print("Source\"%s\"" % srcTextureFile)
-                    #print("Path exists \"%s\"" % os.path.exists(srcTextureFile))
                     baseDirName = os.path.dirname(bpy.data.filepath)
                     if (srcTextureFile[0:2] == "//"):
                         print("Converting relative image name \"%s\"" % srcTextureFile)
@@ -690,7 +756,7 @@ def getVertexIndex(vertexInfo, vertexList):
     vertexList.append(vertexInfo)
     return len(vertexList)-1
 
-def bCollectMeshData(meshData, selectedObjects, applyModifiers):
+def bCollectMeshData(meshData, selectedObjects, applyModifiers, exportColour):
 
     for ob in selectedObjects:
         #ob = bpy.types.Object ##
@@ -738,6 +804,14 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers):
                     faceIdxToUVdata[fidx] = uvface.uv
                 uvData.append(faceIdxToUVdata)
 
+        # Vertex colour data
+        colourData = {}
+        hasColourData = False
+        if exportColour and meshVertex_colors.active:
+            hasColourData = True
+            for fidx, col in enumerate(meshVertex_colors.active.data):
+                colourData[fidx] = [col.color1, col.color2, col.color3]
+
         for fidx, F in enumerate(meshFaces):
             smooth = F.use_smooth
             faces = _sm_faces_[ F.material_index ]
@@ -765,6 +839,15 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers):
                         ny = F.normal[1]
                         nz = F.normal[2]
 
+                    r = 0
+                    g = 0
+                    b = 0
+                    if hasColourData:
+                        rgb = colourData[fidx][ list(tri).index(idx) ]
+                        r = rgb[0]
+                        g = rgb[1]
+                        b = rgb[2]
+
                     px = vxOb.co[0]
                     py = vxOb.co[1]
                     pz = vxOb.co[2]
@@ -776,7 +859,7 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers):
                             vg = ob.vertex_groups[ vxGroup.group ]
                             boneWeights[vg.name]=vxGroup.weight
 
-                    vert = VertexInfo(px,py,pz,nx,ny,nz,u,v,boneWeights)
+                    vert = VertexInfo(px,py,pz, nx,ny,nz, u,v, r,g,b, boneWeights)
                     newVxIdx = getVertexIndex(vert, _sm_verts_[ F.material_index ])
                     newFaceVx.append(newVxIdx)
 
@@ -821,7 +904,7 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers):
     return meshData
 
 
-def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers):
+def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers, exportColour):
     
     subMeshesData = []
     for ob in selectedObjects:             
@@ -857,7 +940,15 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers):
                 for fidx, uvface in enumerate(layer.data):               
                     faceIdxToUVdata[fidx] = uvface.uv
                 uvData.append(faceIdxToUVdata)
-                      
+
+        # Vertex colour data
+        colourData = {}
+        hasColourData = False
+        if exportColour and meshVertex_colors.active:
+            hasColourData = True
+            for fidx, col in enumerate(meshVertex_colors.active.data):
+                colourData[fidx] = [col.color1, col.color2, col.color3]
+
         vertexList = []        
         newFaces = []
                 
@@ -878,12 +969,23 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers):
                         uv = uvData[0][fidx][ list(tri).index(vertex) ] #take 1st layer only
                         u = uv[0]
                         v = uv[1]
+
+                    r = 0
+                    g = 0
+                    b = 0
+                    if hasColourData:
+                        rgb = colourData[fidx][ list(tri).index(vertex) ]
+                        r = rgb[0]
+                        g = rgb[1]
+                        b = rgb[2]
+
                     px = vxOb.co[0]
                     py = vxOb.co[1]
                     pz = vxOb.co[2]
                     nx = vxOb.normal[0] 
                     ny = vxOb.normal[1]
                     nz = vxOb.normal[2]
+
                     #vertex groups
                     boneWeights = {}
                     for vxGroup in vxOb.groups:
@@ -894,14 +996,19 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers):
                     if SHOW_EXPORT_TRACE_VX:
                         print("_vx: "+ str(vertex)+ " co: "+ str([px,py,pz]) +
                               " no: " + str([nx,ny,nz]) +
-                              " uv: " + str([u,v]))
-                    vert = VertexInfo(px,py,pz,nx,ny,nz,u,v,boneWeights)
+                              " uv: " + str([u,v]) +
+                              " co: " + str([r,g,b]))
+
+                    vert = VertexInfo(px,py,pz, nx,ny,nz, u,v, r,g,b, boneWeights)
+
                     newVxIdx = getVertexIndex(vert, vertexList)
                     newFaceVx.append(newVxIdx)
+
                     if SHOW_EXPORT_TRACE_VX:
                         print("Nvx: "+ str(newVxIdx)+ " co: "+ str([px,py,pz]) +
                               " no: " + str([nx,ny,nz]) +
                               " uv: " + str([u,v]))
+
                 newFaces.append(newFaceVx)
                 if SHOW_EXPORT_TRACE_VX:
                     print("Nface: "+ str(fidx) + " indices [" + str(list(newFaceVx))+ "]")
@@ -914,6 +1021,7 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers):
         normals = []
         positions = []
         uvTex = []
+        colours = []
         #vertex groups of object
         boneAssignments = []
         
@@ -923,6 +1031,7 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers):
             positions.append([vxInfo.px, vxInfo.py, vxInfo.pz])
             normals.append([vxInfo.nx, vxInfo.ny, vxInfo.nz])
             uvTex.append([[vxInfo.u, vxInfo.v]])
+            colours.append([vxInfo.r, vxInfo.g, vxInfo.b])
             
             boneWeights = []
             for boneW in vxInfo.boneWeights.keys():
@@ -943,6 +1052,8 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers):
             print("texcoordsets: " + str(len(mesh.uv_textures)))
         if hasUVData:
             geometry['uvsets'] = uvTex
+        if hasColourData:
+            geometry['colours'] = colours
                 
         #need bone name to bone ID dict
         geometry['boneassignments'] = boneAssignments
@@ -1021,9 +1132,10 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                                     texInfo['texture'] = s.texture.image.name
                                     texInfo['texture_path'] = s.texture.image.filepath
                                     matInfo['textures'].append(texInfo)
+
+  
     
-    
-def SaveMesh(filepath, selectedObjects, ogreXMLconverter, applyModifiers,
+""" def SaveMesh(filepath, selectedObjects, ogreXMLconverter, applyModifiers,
               overrideMaterialFlag, copyTextures, export_and_link_skeleton, keep_xml, enable_by_material):
     
     blenderMeshData = {}
@@ -1059,27 +1171,78 @@ def SaveMesh(filepath, selectedObjects, ogreXMLconverter, applyModifiers,
     
     XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
                       export_and_link_skeleton, keep_xml)
-    
+ """    
+
+def calculateTangents(faces, positions, normals, uvs):
+    tangents = [[0,0,0]] * len(positions)
+    for face in faces:
+        pa = positions[ face[0] ]
+        pb = positions[ face[1] ]
+        pc = positions[ face[2] ]
+        ab = [ pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2] ]
+        ac = [ pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2] ]
+
+        # project ab, ac onto normal
+        n = normals[ face[0] ]
+        abn = ab[0] * n[0] + ab[1] * n[1] + ab[2] * n[2]
+        acn = ac[0] * n[0] + ac[1] * n[1] + ac[2] * n[2]
+        ab[0] -= n[0] * abn
+        ab[1] -= n[1] * abn
+        ab[2] -= n[2] * abn
+        ac[0] -= n[0] * acn
+        ac[1] -= n[1] * acn
+        ac[2] -= n[2] * acn
+
+        # texture coordinate deltas
+        uva = uvs[ face[0] ][0]
+        uvb = uvs[ face[1] ][0]
+        uvc = uvs[ face[2] ][0]
+        abu = uvb[0] - uva[0]
+        abv = uvb[1] - uva[1]
+        acu = uvc[0] - uva[0]
+        acv = uvc[1] - uva[1]
+        if acv*abu > abv*acu:
+            acv = -acv
+            abv = -abv
+
+        # tangent
+        tx = ac[0] * abv - ab[0] * acv
+        ty = ac[1] * abv - ab[1] * acv
+        tz = ac[2] * abv - ab[2] * acv
+
+        # Normalise
+        l = math.sqrt(tx*tx + ty*ty + tz * tz)
+        tx = tx / l
+        ty = ty / l
+        tz = tz / l
+
+        tangents[ face[0] ] = [tx, ty, tz]
+        tangents[ face[1] ] = [tx, ty, tz]
+        tangents[ face[2] ] = [tx, ty, tz]
+
+    return tangents
+
 def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
                      export_and_link_skeleton, keep_xml):
         
-    if(ogreXMLconverter is not None):
-        # for mesh
-        # use Ogre XML converter  xml -> binary mesh
+    if ogreXMLconverter is None: return False
+    # for mesh
+    # use Ogre XML converter  xml -> binary mesh
+    try:
         xmlFilepath = filepath + ".xml"
-        os.system('%s "%s"' % (ogreXMLconverter, xmlFilepath))        
-        # remove XML file
-        if keep_xml is False:
-            os.unlink("%s" % xmlFilepath)  
+        subprocess.call([ogreXMLconverter, xmlFilepath])
+        # remove XML file if successfully converted
+        if keep_xml is False and os.path.isfile(filepath):
+            os.unlink("%s" % xmlFilepath)
+
         if 'skeleton' in blenderMeshData and export_and_link_skeleton:
             # for skeleton
             skelFile = os.path.splitext(filepath)[0] # removing .mesh
             xmlFilepath = skelFile + ".skeleton.xml"
-            print(xmlFilepath)
-            os.system('%s "%s"' % (ogreXMLconverter, xmlFilepath))        
+            subprocess.call([ogreXMLconverter, xmlFilepath])
             # remove XML file
             if keep_xml is False:
-                os.unlink("%s" % xmlFilepath) 
+                os.unlink("%s" % xmlFilepath)
 
 def save(operator, context, filepath,       
          ogreXMLconverter=None,

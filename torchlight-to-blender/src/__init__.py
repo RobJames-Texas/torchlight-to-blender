@@ -20,19 +20,23 @@
 
 """
 Name: 'OGRE for Torchlight 2(*.MESH)'
-Blender: 2.59 and 2.62
+Blender: 2.59, 2.62, 2.63a, 2.77a, 2.79
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
     
-Author: Dusho
+Author: Rob James
+Original Author: Dusho
+
+There were some great updates added to a forked version of this script for a game called Kenshi by "someone".
+I'm attempting to put the relevent changes into the plugin to improve Torchlight editing.
 
 Thanks goes to 'goatman' for his port of Ogre export script from 2.49b to 2.5x,
 and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 
 """
 
-__author__ = "Dusho"
-__version__ = "0.6.4 25-Mar-2017"
+__author__ = "Rob James"
+__version__ = "0.7.1 09-May-2017"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -41,11 +45,13 @@ Supported:<br>
     * import/export of basic meshes
     * import of skeleton
     * import/export of vertex weights (ability to import characters and adjust rigs)
+    * export of vertex colour (RGB)
+    * Calculation of tangents and binormals for export
 
 Missing:<br>   
     * skeletons (export)
     * animations
-    * vertex color export
+    * shape keys
 
 Known issues:<br>
     * imported materials will loose certain informations not applicable to Blender when exported
@@ -86,9 +92,6 @@ if "bpy" in locals():
     if "TLExport" in locals():
         imp.reload(TLExport)
 
-# Path for your OgreXmlConverter
-OGRE_XML_CONVERTER = "C:\OgreCommandLineTools\OgreXmlConverter.exe"
-
 import bpy
 from bpy.props import (BoolProperty,
                        FloatProperty,
@@ -102,6 +105,24 @@ from bpy_extras.io_utils import (ExportHelper,
                                  )
 
 
+# Path for your OgreXmlConverter
+OGRE_XML_CONVERTER = "OgreXMLConverter.exe"
+
+def findConverter(p):
+    import os
+
+    # Full path exists
+    if os.path.isfile(p): return p
+
+    # Look in script directory
+    scriptPath = os.path.dirname( os.path.realpath( __file__ ) )
+    sp = os.path.join(scriptPath, p)
+    if os.path.isfile(sp): return sp
+
+    # Fail
+    print('Could not find xml converter', p)
+    return None
+
 class ImportTL(bpy.types.Operator, ImportHelper):
     '''Load a Torchlight MESH File'''
     bl_idname = "import_scene.mesh"
@@ -110,15 +131,22 @@ class ImportTL(bpy.types.Operator, ImportHelper):
 
     filename_ext = ".mesh"
     
+
     keep_xml = BoolProperty(
             name="Keep XML",
             description="Keeps the XML file when converting from .MESH",
             default=False,
             )
-#    
+
     filter_glob = StringProperty(
             default="*.mesh;*.MESH;.xml;.XML",
             options={'HIDDEN'},
+            )
+
+    xml_converter = StringProperty(
+            name="XML Converter",
+            description="Ogre XML Converter program for converting between .MESH files and .XML files",
+            default=OGRE_XML_CONVERTER
             )
 
 
@@ -127,12 +155,18 @@ class ImportTL(bpy.types.Operator, ImportHelper):
         from . import TLImport
 
         keywords = self.as_keywords(ignore=("filter_glob",))
-        keywords["ogreXMLconverter"] = OGRE_XML_CONVERTER + " -q"
+        keywords['xml_converter'] = findConverter( keywords['xml_converter'] )
+
+        print( 'converter', keywords['xml_converter'])
 
         return TLImport.load(self, context, **keywords)
 
     def draw(self, context):
-        layout = self.layout       
+        layout = self.layout
+        
+        row = layout.row(align=True)
+        row.prop(self, "xml_converter")
+
         row = layout.row(align=True)
         row.prop(self, "keep_xml")
 
@@ -145,6 +179,35 @@ class ExportTL(bpy.types.Operator, ExportHelper):
 
     filename_ext = ".mesh"
 
+    xml_converter = StringProperty(
+            name="XML Converter",
+            description="Ogre XML Converter program for converting between .MESH files and .XML files",
+            default=OGRE_XML_CONVERTER,
+            )
+
+    export_tangents = BoolProperty(
+            name="Export tangents",
+            description="Export tangent data for the mesh",
+            default=True,
+            )
+    tangent_parity = BoolProperty(
+            name="   Parity in W",
+            description="Tangents have parity stored in the W component",
+            default=False,
+            )
+
+    export_binormals = BoolProperty(
+            name="Export Binormals",
+            description="Generate binormals for the mesh",
+            default=False,
+            )
+
+    export_colour = BoolProperty(
+            name="Export colour",
+            description="Export vertex colour data",
+            default=False,
+            )
+
     enable_by_material = BoolProperty(
             name="Enable By Material",
             description="Multiple materials on a mesh will be exported as submeshes.",
@@ -154,24 +217,24 @@ class ExportTL(bpy.types.Operator, ExportHelper):
     keep_xml = BoolProperty(
             name="Keep XML",
             description="Keeps the XML file when converting to .MESH",
-            default=False,   #TODO make default False for release
+            default=False,
             )
     
     apply_transform = BoolProperty(
             name="Apply Transform",
             description="Applies object's transformation to its data",
-            default=True,   
+            default=False,   
             )
     
     apply_modifiers = BoolProperty(
             name="Apply Modifiers",
             description="Applies modifiers",
-            default=True,   
+            default=False,   
             )
     
     overwrite_material = BoolProperty(
             name="Overwrite .material",
-            description="Overwrites existing .material file, if present",
+            description="Overwrites existing .material file, if present.",
             default=False,   
             )
             
@@ -183,8 +246,8 @@ class ExportTL(bpy.types.Operator, ExportHelper):
     
     export_and_link_skeleton = BoolProperty(
             name="Export .skeleton and link",
-            description="Exports new skeleton and links the mesh to this new skeleton",
-            default=False,   
+            description="Exports new skeleton and links the mesh to this new skeleton.\nLeave off to link with existing skeleton if applicable.",
+            default=False,
             )
 
     filter_glob = StringProperty(
@@ -198,7 +261,7 @@ class ExportTL(bpy.types.Operator, ExportHelper):
         from mathutils import Matrix
         
         keywords = self.as_keywords(ignore=("check_existing", "filter_glob"))
-        keywords["ogreXMLconverter"] = OGRE_XML_CONVERTER + " -q"
+        keywords['xml_converter'] = findConverter( keywords['xml_converter'] )
       
         return TLExport.save(self, context, **keywords)       
 
@@ -207,10 +270,22 @@ class ExportTL(bpy.types.Operator, ExportHelper):
         layout = self.layout
         
         row = layout.row(align=True)
+        row.prop(self, "xml_converter")
+
+        row = layout.row(align=True)
         row.prop(self, "enable_by_material")
 
         row = layout.row(align=True)
         row.prop(self, "keep_xml")
+        
+        row = layout.row(align=True)
+        row.prop(self, "export_tangents")
+
+        row = layout.row(align=True)
+        row.prop(self, "export_binormals")
+
+        row = layout.row(align=True)
+        row.prop(self, "export_colour")
         
         row = layout.row(align=True)
         row.prop(self, "apply_transform")
