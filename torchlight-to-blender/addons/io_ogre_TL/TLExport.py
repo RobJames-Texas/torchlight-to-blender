@@ -14,7 +14,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "someone"
-__version__ = "0.7.1 09-May-2017"
+__version__ = "0.7.2 09-May-2017"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -35,8 +35,9 @@ Known issues:<br>
     * imported materials will loose certain informations not applicable to Blender when exported
 
 History:<br>
-    * v0.7.1   (07-Sep-2016) - bug fixes
-    * v0.7.0   (02-Sep-2016) - Persistant Ogre bone IDs, Export vertex colours. Generates tangents and binormals.
+    * v0.7.2   (08-Dec-2016) - fixed divide by 0 error calculating tangents. From Kenshi addon
+    * v0.7.1   (07-Sep-2016) - bug fixes. From Kenshi addon
+    * v0.7.0   (02-Sep-2016) - Persistant Ogre bone IDs, Export vertex colours. Generates tangents and binormals. From Kenshi addon
     * v0.6.5   (09-May-2017) - BUGFIX: Mesh with no bone assignment would not export.
     * v0.6.4   (25-Mar-2017) - BUGFIX: By material was breaking armor sets
     * v0.6.3   (01-Jan-2017) - I'm not Dusho, but I added ability to export multiple materials and textures on a single mesh.
@@ -1210,9 +1211,10 @@ def calculateTangents(faces, positions, normals, uvs):
 
         # Normalise
         l = math.sqrt(tx*tx + ty*ty + tz * tz)
-        tx = tx / l
-        ty = ty / l
-        tz = tz / l
+        if l != 0:
+            tx = tx / l
+            ty = ty / l
+            tz = tz / l
 
         tangents[face[0]] = [tx, ty, tz]
         tangents[face[1]] = [tx, ty, tz]

@@ -14,7 +14,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "someone"
-__version__ = "0.7.1 07-Sep-2016"
+__version__ = "0.7.2 07-Sep-2016"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -26,17 +26,18 @@ Supported:<br>
     * export of vertex colour (RGB)
     * Calculation of tangents and binormals for export
 
-Missing:<br>   
+Missing:<br>
     * skeletons (export)
     * animations
     * shape keys
 
 Known issues:<br>
     * imported materials will loose certain informations not applicable to Blender when exported
-     
+
 History:<br>
-    * v0.7.1   (07-Sep-2016) - bug fixes
-    * v0.7.0   (02-Sep-2016) - Persistant Ogre bone IDs, Export vertex colours. Generates tangents and binormals.
+    * v0.7.2   (08-Dec-2016) - fixed divide by 0 error calculating tangents. From Kenshi addon
+    * v0.7.1   (07-Sep-2016) - bug fixes. From Kenshi addon
+    * v0.7.0   (02-Sep-2016) - Persistant Ogre bone IDs, Export vertex colours. Generates tangents and binormals. From Kenshi addon
     * v0.6.2   (09-Mar-2013) - bug fixes (working with materials+textures), added 'Apply modifiers' and 'Copy textures'
     * v0.6.1   (27-Sep-2012) - updated to work with Blender 2.63a
     * v0.6     (01-Sep-2012) - added skeleton import + vertex weights import/export
@@ -68,7 +69,7 @@ MESHDATA:
         [material] - string (material name)
         [materialOrg] - original material name - for searching the in shared materials file
         [faces] - vectors with faces [v1,v2,v3]
-        [geometry] - identical to 'sharedgeometry' data content   
+        [geometry] - identical to 'sharedgeometry' data content
 ['materials']
     [(matID)]: {}
         ['texture'] - full path to texture file
@@ -124,7 +125,7 @@ def GetValidBlenderName(name):
                 prefix = newname[0:(maxChars+1-len(suffix))]
                 newname = prefix + suffix
         else:
-            newname = name[0:maxChars+1]   
+            newname = name[0:maxChars+1]
     if(newname != name):
         print("WARNING: Name truncated (" + name + " -> " + newname + ")")
 

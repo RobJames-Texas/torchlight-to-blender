@@ -27,9 +27,10 @@ Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
 Author: Rob James
 Original Author: Dusho
 
-There were some great updates added to a forked version of this script for a game called
-Kenshi by "someone".
-I'm attempting to put the relevent changes into the plugin to improve Torchlight editing.
+There were some great updates added to a forked version of this script
+for a game called Kenshi by "someone".
+I'm attempting to put the relevent changes into the plugin to improve
+Torchlight editing.
 
 Thanks goes to 'goatman' for his port of Ogre export script from 2.49b to 2.5x,
 and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
@@ -45,7 +46,8 @@ This script imports/exports Torchlight Ogre models into/from Blender.
 Supported:<br>
     * import/export of basic meshes
     * import of skeleton
-    * import/export of vertex weights (ability to import characters and adjust rigs)
+    * import/export of vertex weights
+      (ability to import characters and adjust rigs)
     * export of vertex colour (RGB)
     * Calculation of tangents and binormals for export
 
@@ -55,14 +57,23 @@ Missing:<br>
     * shape keys
 
 Known issues:<br>
-    * imported materials will loose certain informations not applicable to Blender when exported
+    * imported materials will loose certain informations not applicable
+      to Blender when exported
 
 History:<br>
+    * v0.7.2   (08-Dec-2016) - fixed divide by 0 error calculating tangents.
+             From Kenshi addon
+    * v0.7.1   (07-Sep-2016) - bug fixes. From Kenshi addon
+    * v0.7.0   (02-Sep-2016) - Persistant Ogre bone IDs, Export vertex colours.
+             Generates tangents and binormals. From Kenshi addon
     * v0.6.4   (25-Mar-2017) - BUGFIX: By material was breaking armor sets
-    * v0.6.3   (01-Jan-2017) - I'm not Dusho, but I added ability to export multiple materials and textures on a single mesh.
-    * v0.6.2   (09-Mar-2013) - bug fixes (working with materials+textures), added 'Apply modifiers' and 'Copy textures'
+    * v0.6.3   (01-Jan-2017) - I'm not Dusho, but I added ability to export
+             multiple materials and textures on a single mesh.
+    * v0.6.2   (09-Mar-2013) - bug fixes (working with materials+textures),
+             added 'Apply modifiers' and 'Copy textures'
     * v0.6.1   (27-Sep-2012) - updated to work with Blender 2.63a
-    * v0.6     (01-Sep-2012) - added skeleton import + vertex weights import/export
+    * v0.6     (01-Sep-2012) - added skeleton import + vertex weights
+             import/export
     * v0.5     (06-Mar-2012) - added material import/export
     * v0.4.1   (29-Feb-2012) - flag for applying transformation, default=true
     * v0.4     (28-Feb-2012) - fixing export when no UV data are present
@@ -74,15 +85,15 @@ History:<br>
 
 bl_info = {
     "name": "Torchlight 2 MESH format",
-    "author": "Dusho",
+    "author": "Rob James",
     "blender": (2, 5, 9),
     "api": 35622,
     "location": "File > Import-Export",
     "description": ("Import-Export Torchlight 2 Model, Import MESH, UV's, "
                     "materials and textures"),
     "warning": "",
-    "wiki_url": (""),
-    "tracker_url": "",
+    "wiki_url": ("https://github.com/RobJames-Texas/torchlight-to-blender"),
+    "tracker_url": "https://github.com/RobJames-Texas/torchlight-to-blender",
     "support": 'OFFICIAL',
     "category": "Import-Export"}
 
@@ -120,7 +131,8 @@ def findConverter(p):
     # Look in script directory
     scriptPath = os.path.dirname(os.path.realpath(__file__))
     sp = os.path.join(scriptPath, p)
-    if os.path.isfile(sp): return sp
+    if os.path.isfile(sp):
+        return sp
 
     # Fail
     print('Could not find xml converter', p)
@@ -191,7 +203,7 @@ class ExportTL(bpy.types.Operator, ExportHelper):
     export_tangents = BoolProperty(
             name="Export tangents",
             description="Export tangent data for the mesh",
-            default=True,
+            default=False,
             )
     tangent_parity = BoolProperty(
             name="   Parity in W",
