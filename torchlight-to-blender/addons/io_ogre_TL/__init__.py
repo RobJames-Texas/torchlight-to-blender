@@ -38,7 +38,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.7.1 09-May-2017"
+__version__ = "0.8.2 25-Sep-2017"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -61,6 +61,12 @@ Known issues:<br>
       to Blender when exported
 
 History:<br>
+    * v0.8.2   (25-Sep-2017) - Fixed bone translations in animations
+             From Kenshi addon
+    * v0.8.1   (28-Jul-2017) - Added alpha component to vertex colour
+             From Kenshi addon
+    * v0.8.0   (30-Jun-2017) - Added animation and shape key support.
+             Rewritten skeleton export. From Kenshi addon
     * v0.7.2   (08-Dec-2016) - fixed divide by 0 error calculating tangents.
              From Kenshi addon
     * v0.7.1   (07-Sep-2016) - bug fixes. From Kenshi addon
@@ -99,10 +105,10 @@ bl_info = {
 
 if "bpy" in locals():
     import imp
-    if "TLImport" in locals():
-        imp.reload(TLImport)
-    if "TLExport" in locals():
-        imp.reload(TLExport)
+    if "OgreImport" in locals():
+        imp.reload(OgreImport)
+    if "OgreExport" in locals():
+        imp.reload(OgreExport)
 
 import bpy
 from bpy.props import (BoolProperty,
@@ -139,8 +145,8 @@ def findConverter(p):
     return None
 
 
-class ImportTL(bpy.types.Operator, ImportHelper):
-    '''Load a Torchlight MESH File'''
+class ImportOgre(bpy.types.Operator, ImportHelper):
+    '''Load an Ogre MESH File'''
     bl_idname = "import_scene.mesh"
     bl_label = "Import MESH"
     bl_options = {'PRESET'}
@@ -151,6 +157,24 @@ class ImportTL(bpy.types.Operator, ImportHelper):
             name="Keep XML",
             description="Keeps the XML file when converting from .MESH",
             default=False,
+            )
+
+    import_animations = BoolProperty(
+            name="Import animation",
+            description="Import animations as actions",
+            default=True,
+            )
+
+    round_frames = BoolProperty(
+            name="Round frame numbers",
+            description="Rounds fractional keyframes to the closest frame",
+            default=False,
+            )
+
+    import_shapekeys = BoolProperty(
+            name="Import shape keys",
+            description="Import shape keys (morphs)",
+            default=True,
             )
 
     filter_glob = StringProperty(
@@ -166,14 +190,17 @@ class ImportTL(bpy.types.Operator, ImportHelper):
 
     def execute(self, context):
         # print("Selected: " + context.active_object.name)
-        from . import TLImport
+        from . import OgreImport
 
         keywords = self.as_keywords(ignore=("filter_glob",))
         keywords['xml_converter'] = findConverter(keywords['xml_converter'])
 
         print('converter', keywords['xml_converter'])
 
-        return TLImport.load(self, context, **keywords)
+        bpy.context.window.cursor_set("WAIT")
+        result = OgreImport.load(self, context, **keywords)
+        bpy.context.window.cursor_set("DEFAULT")
+        return result
 
     def draw(self, context):
         layout = self.layout
@@ -184,8 +211,19 @@ class ImportTL(bpy.types.Operator, ImportHelper):
         row = layout.row(align=True)
         row.prop(self, "keep_xml")
 
+        row = layout.row(align=True)
+        row.prop(self, "import_shapekeys")
 
-class ExportTL(bpy.types.Operator, ExportHelper):
+        row = layout.row(align=True)
+        row.prop(self, "import_animations")
+
+        # row = layout.row(align=True)
+        # row.prop(self, "round_frames")
+
+###############################################################################
+
+
+class ExportOgre(bpy.types.Operator, ExportHelper):
     '''Export a Torchlight MESH File'''
 
     bl_idname = "export_scene.mesh"
@@ -219,7 +257,7 @@ class ExportTL(bpy.types.Operator, ExportHelper):
 
     export_colour = BoolProperty(
             name="Export colour",
-            description="Export vertex colour data",
+            description="Export vertex colour data. Name a colour layer 'Alpha' to use as the alpha component",
             default=False,
             )
 
@@ -243,7 +281,13 @@ class ExportTL(bpy.types.Operator, ExportHelper):
 
     apply_modifiers = BoolProperty(
             name="Apply Modifiers",
-            description="Applies modifiers",
+            description="Applies modifiers to the mesh",
+            default=False,
+            )
+
+    export_poses = BoolProperty(
+            name="Export shape keys",
+            description="Export shape keys as poses",
             default=False,
             )
 
@@ -259,9 +303,15 @@ class ExportTL(bpy.types.Operator, ExportHelper):
             default=False,
             )
 
-    export_and_link_skeleton = BoolProperty(
-            name="Export .skeleton and link",
+    export_skeleton = BoolProperty(
+            name="Export skeleton",
             description="Exports new skeleton and links the mesh to this new skeleton.\nLeave off to link with existing skeleton if applicable.",
+            default=False,
+            )
+
+    export_animation = BoolProperty(
+            name="Export Animation",
+            description="Export all actions attached to the selected skeleton as animations",
             default=False,
             )
 
@@ -270,58 +320,55 @@ class ExportTL(bpy.types.Operator, ExportHelper):
             options={'HIDDEN'},
             )
 
+    def invoke(self, context, event):
+        # if not self.filepath:
+        #    self.filepath = bpy.path.ensure_ext(bpy.data.filepath, ".bm")
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
     def execute(self, context):
-        from . import TLExport
+        from . import OgreExport
         from mathutils import Matrix
 
         keywords = self.as_keywords(ignore=("check_existing", "filter_glob"))
         keywords['xml_converter'] = findConverter(keywords['xml_converter'])
 
-        return TLExport.save(self, context, **keywords)
+        bpy.context.window.cursor_set("WAIT")
+        result = OgreExport.save(self, context, **keywords)
+        bpy.context.window.cursor_set("DEFAULT")
+        return result
 
     def draw(self, context):
         layout = self.layout
 
-        row = layout.row(align=True)
-        row.prop(self, "xml_converter")
+        xml = layout.box()
+        xml.prop(self, "xml_converter")
+        xml.prop(self, "keep_xml")
 
-        row = layout.row(align=True)
-        row.prop(self, "enable_by_material")
+        mesh = layout.box()
+        mesh.prop(self, "enable_by_material")
+        mesh.prop(self, "export_tangents")
+        mesh.prop(self, "export_binormals")
+        mesh.prop(self, "export_colour")
+        mesh.prop(self, "apply_transform")
+        mesh.prop(self, "apply_modifiers")
 
-        row = layout.row(align=True)
-        row.prop(self, "keep_xml")
+        material = layout.box()
+        material.prop(self, "overwrite_material")
+        material.prop(self, "copy_textures")
 
-        row = layout.row(align=True)
-        row.prop(self, "export_tangents")
-
-        row = layout.row(align=True)
-        row.prop(self, "export_binormals")
-
-        row = layout.row(align=True)
-        row.prop(self, "export_colour")
-
-        row = layout.row(align=True)
-        row.prop(self, "apply_transform")
-
-        row = layout.row(align=True)
-        row.prop(self, "apply_modifiers")
-
-        row = layout.row(align=True)
-        row.prop(self, "overwrite_material")
-
-        row = layout.row(align=True)
-        row.prop(self, "copy_textures")
-
-        row = layout.row(align=True)
-        row.prop(self, "export_and_link_skeleton")
+        skeleton = layout.box()
+        skeleton.prop(self, "export_skeleton")
+        skeleton.prop(self, "export_animation")
+###############################################################################
 
 
 def menu_func_import(self, context):
-    self.layout.operator(ImportTL.bl_idname, text="Torchlight OGRE (.mesh)")
+    self.layout.operator(ImportOgre.bl_idname, text="Torchlight OGRE (.mesh)")
 
 
 def menu_func_export(self, context):
-    self.layout.operator(ExportTL.bl_idname, text="Torchlight OGRE (.mesh)")
+    self.layout.operator(ExportOgre.bl_idname, text="Torchlight OGRE (.mesh)")
 
 
 def register():

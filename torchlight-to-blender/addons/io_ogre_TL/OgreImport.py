@@ -6,15 +6,21 @@ Blender: 2.59, 2.62, 2.63a, 2.77a
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight OGRE mesh files'
 
-Author: Dusho
+Author: Rob James
+Original Author: Dusho
+
+There were some great updates added to a forked version of this script
+for a game called Kenshi by "someone".
+I'm attempting to put the relevent changes into the plugin to improve
+Torchlight editing.
 
 Thanks goes to 'goatman' for his port of Ogre export script from 2.49b to 2.5x,
 and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 
 """
 
-__author__ = "someone"
-__version__ = "0.7.2 07-Sep-2016"
+__author__ = "Rob James"
+__version__ = "0.8.2 25-Sep-2017"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -22,7 +28,8 @@ This script imports/exports Torchlight Ogre models into/from Blender.
 Supported:<br>
     * import/export of basic meshes
     * import of skeleton
-    * import/export of vertex weights (ability to import characters and adjust rigs)
+    * import/export of vertex weights (ability to import characters and
+      adjust rigs)
     * export of vertex colour (RGB)
     * Calculation of tangents and binormals for export
 
@@ -32,15 +39,26 @@ Missing:<br>
     * shape keys
 
 Known issues:<br>
-    * imported materials will loose certain informations not applicable to Blender when exported
+    * imported materials will loose certain informations not applicable to
+      Blender when exported
 
 History:<br>
-    * v0.7.2   (08-Dec-2016) - fixed divide by 0 error calculating tangents. From Kenshi addon
+    * v0.8.2   (25-Sep-2017) - Fixed bone translations in animations
+             From Kenshi addon
+    * v0.8.1   (28-Jul-2017) - Added alpha component to vertex colour
+             From Kenshi addon
+    * v0.8.0   (30-Jun-2017) - Added animation and shape key support.
+             Rewritten skeleton export. From Kenshi addon
+    * v0.7.2   (08-Dec-2016) - fixed divide by 0 error calculating tangents.
+             From Kenshi addon
     * v0.7.1   (07-Sep-2016) - bug fixes. From Kenshi addon
-    * v0.7.0   (02-Sep-2016) - Persistant Ogre bone IDs, Export vertex colours. Generates tangents and binormals. From Kenshi addon
-    * v0.6.2   (09-Mar-2013) - bug fixes (working with materials+textures), added 'Apply modifiers' and 'Copy textures'
+    * v0.7.0   (02-Sep-2016) - Persistant Ogre bone IDs, Export vertex colours.
+             Generates tangents and binormals. From Kenshi addon
+    * v0.6.2   (09-Mar-2013) - bug fixes (working with materials+textures),
+             added 'Apply modifiers' and 'Copy textures'
     * v0.6.1   (27-Sep-2012) - updated to work with Blender 2.63a
-    * v0.6     (01-Sep-2012) - added skeleton import + vertex weights import/export
+    * v0.6     (01-Sep-2012) - added skeleton import + vertex weights
+             import/export
     * v0.5     (06-Mar-2012) - added material import/export
     * v0.4.1   (29-Feb-2012) - flag for applying transformation, default=true
     * v0.4     (28-Feb-2012) - fixing export when no UV data are present
@@ -430,6 +448,28 @@ def xCollectBoneAssignments(meshData, xmldoc):
     return VertexGroups
 
 
+def xCollectPoseData(meshData, xmldoc):
+    poses = xmldoc.getElementsByTagName('pose')
+    if(len(poses) > 0):
+        meshData['poses'] = []
+    for pose in poses:
+        name = pose.getAttribute('name')
+        target = pose.getAttribute('target')
+        index = pose.getAttribute('index')
+        if target == 'submesh':
+            poseData = {}
+            poseData['name'] = name
+            poseData['submesh'] = int(index)
+            poseData['data'] = data = []
+            meshData['poses'].append(poseData)
+            for value in pose.getElementsByTagName('poseoffset'):
+                index = int(value.getAttribute('index'))
+                x = float(value.getAttribute('x'))
+                y = float(value.getAttribute('y'))
+                z = float(value.getAttribute('z'))
+                data.append((index, x, -z, y))
+
+
 def xGetSkeletonLink(xmldoc, folder):
     skeletonFile = "None"
     if(len(xmldoc.getElementsByTagName("skeletonlink")) > 0):
@@ -677,6 +717,140 @@ def calcBoneLength(vec):
     return math.sqrt(vec[0]**2+vec[1]**2+vec[2]**2)
 
 
+###############################################################################
+def quaternionFromAngleAxis(angle, x, y, z):
+    r = angle * 0.5
+    s = math.sin(r)
+    c = math.cos(r)
+    return (c, x*s, y*s, z*s)
+
+
+def xGetChild(node, tag):
+    for n in node.childNodes:
+        if n.nodeType == 1 and n.tagName == tag:
+            return n
+    return None
+
+
+def xCollectAnimations(meshData, xDoc, integerFrames=True):
+    if 'animations' not in meshData:
+        meshData['animations'] = {}
+    for container in xDoc.getElementsByTagName('animations'):
+        for animation in container.childNodes:
+            if animation.nodeType == 1 and animation.tagName == 'animation':
+                name = animation.getAttribute('name')
+
+                # read action data
+                action = {}
+                tracks = xGetChild(animation, 'tracks')
+                xReadAnimation(action, tracks.childNodes, integerFrames)
+                meshData['animations'][name] = action
+
+
+def xReadAnimation(action, tracks, integerFrames=True):
+    fps = bpy.context.scene.render.fps
+    for track in tracks:
+        if track.nodeType != 1:
+            continue
+        target = track.getAttribute('bone')
+        action[target] = trackData = [[] for i in range(3)]  # pos, rot, scl
+        for keyframe in xGetChild(track, 'keyframes').childNodes:
+            if keyframe.nodeType != 1:
+                continue
+            time = float(keyframe.getAttribute('time'))
+            frame = time * fps
+            if integerFrames:
+                frame = round(frame)
+            for key in keyframe.childNodes:
+                if key.nodeType != 1:
+                    continue
+                if key.tagName == 'translate':
+                    x = float(key.getAttribute('x'))
+                    y = float(key.getAttribute('y'))
+                    z = float(key.getAttribute('z'))
+                    trackData[0].append([frame, (x, y, z)])
+                elif key.tagName == 'rotate':
+                    axis = xGetChild(key, 'axis')
+                    angle = key.getAttribute('angle')
+                    x = axis.getAttribute('x')
+                    y = axis.getAttribute('y')
+                    z = axis.getAttribute('z')
+                    # skip if axis contains #INF or #IND
+                    if '#' not in x and '#' not in y and '#' not in z:
+                        quat = quaternionFromAngleAxis(float(angle), float(z), float(x), float(y))
+                        trackData[1].append([frame, quat])
+                elif key.tagName == 'scale':
+                    x = float(key.getAttribute('x'))
+                    y = float(key.getAttribute('y'))
+                    z = float(key.getAttribute('z'))
+                    trackData[2].append([frame, (-x, z, y)])
+
+
+def bCreateAnimations(meshData):
+    path_id = ['location', 'rotation_quaternion', 'scale']
+
+    if 'animations' in meshData:
+        rig = meshData['rig']
+        rig.animation_data_create()
+        animdata = rig.animation_data
+
+        # calculate transformation matrices for translation
+        mat = {}
+        fix1 = Matrix([(1, 0, 0), (0, 0, 1), (0, -1, 0)])
+        fix2 = Matrix([(0, 1, 0), (0, 0, 1), (1, 0, 0)])
+        for bone in rig.pose.bones:
+            if bone.parent:
+                mat[bone.name] = fix2 * bone.parent.matrix.to_3x3().transposed() * bone.matrix.to_3x3()
+            else:
+                mat[bone.name] = fix1 * bone.matrix.to_3x3()
+
+        for name in sorted(meshData['animations'].keys(), reverse=True):
+            action = bpy.data.actions.new(name)
+            # action.use_fake_user = True
+            # Dont need the above as we are adding them to the nla editor
+            print("Created action", name)
+
+            # iterate target bones
+            for target in meshData['animations'][name]:
+                data = meshData['animations'][name][target]
+                bone = rig.pose.bones[target]
+                if not bone:
+                    continue  # error
+                bone.rotation_mode = 'QUATERNION'
+
+                # Fix rotation inversions
+                for i in range(1, len(data[1])):
+                    a = data[1][i-1][1]
+                    b = data[1][i][1]
+                    dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] * a[3]*b[3]
+                    if dot < -0.8:
+                        print('fix inversion', name, target)
+                        data[1][i][1] = (-b[0], -b[1], -b[2], -b[3])
+
+                # fix translation keys - rotate by inverse rest orientation
+                m = mat[target].transposed()
+                for i in range(0, len(data[0])):
+                    v = Vector(data[0][i][1])
+                    data[0][i][1] = m * v
+
+                # create fcurves
+                for i in range(3):
+                    if data[i]:
+                        path = bone.path_from_id(path_id[i])
+                        for channel in range(len(data[i][0][1])):
+                            curve = action.fcurves.new(path, channel, bone.name)
+                            for key in data[i]:
+                                curve.keyframe_points.insert(key[0], key[1][channel])
+
+            # Add action to NLA track
+            track = animdata.nla_tracks.new()
+            track.name = name
+            track.mute = True
+            track.strips.new(name, 0, action)
+
+###############################################################################
+
+
 def bCreateMesh(meshData, folder, name, filepath):
     if 'skeleton' in meshData:
         skeletonName = meshData['skeletonName']
@@ -706,6 +880,7 @@ def bCreateSkeleton(meshData, name):
     # create Armature
     amt = bpy.data.armatures.new(name)
     rig = bpy.data.objects.new(name, amt)
+    meshData['rig'] = rig
     # rig.location = origin
     rig.show_x_ray = True
     # amt.show_names = True
@@ -831,8 +1006,8 @@ def bCreateSubMeshes(meshData, meshName):
     allObjects = []
     submeshes = meshData['submeshes']
 
-    for i in range(len(submeshes)):
-        subMeshData = submeshes[i]
+    for subMeshIndex in range(len(submeshes)):
+        subMeshData = submeshes[subMeshIndex]
         subMeshName = subMeshData['material']
         # Create mesh and object
         me = bpy.data.meshes.new(subMeshName)
@@ -964,7 +1139,7 @@ def bCreateSubMeshes(meshData, meshName):
 
         # vertex colors
         if 'vertexcolors' in geometry:
-            colorLayer = meshVertex_colors.new('ColorLayer')
+            colorLayer = meshVertex_colors.new('Colour')
             meshVertex_colors.active = colorLayer
             vcolors = geometry['vertexcolors']
             for f in meshFaces:
@@ -974,6 +1149,19 @@ def bCreateSubMeshes(meshData, meshName):
                 colorLayer.data[f.index].color1 = (colv1[0], colv1[1], colv1[2])
                 colorLayer.data[f.index].color2 = (colv2[0], colv2[1], colv2[2])
                 colorLayer.data[f.index].color3 = (colv3[0], colv3[1], colv3[2])
+
+            # Vertex Alpha
+            for c in vcolors:
+                if c[3] != 1.0:
+                    alphaLayer = meshVertex_colors.new('Alpha')
+                    for f in meshFaces:
+                        a1 = vcolors[f.vertices[0]][3]
+                        a2 = vcolors[f.vertices[1]][3]
+                        a3 = vcolors[f.vertices[2]][3]
+                        alphaLayer.data[f.index].color1 = (a1, a1, a1)
+                        alphaLayer.data[f.index].color2 = (a2, a2, a2)
+                        alphaLayer.data[f.index].color3 = (a3, a3, a3)
+                    break
 
         # bone assignments:
         if 'skeleton' in meshData:
@@ -992,11 +1180,26 @@ def bCreateSubMeshes(meshData, meshName):
             mod.use_bone_envelopes = False
             mod.use_vertex_groups = True
 
+        # Shape keys (poses)
+        if 'poses' in meshData:
+            base = None
+            for pose in meshData['poses']:
+                if(pose['submesh'] == subMeshIndex):
+                    if base is None:
+                        base = ob.shape_key_add('Basis')  # must have base shape
+                    name = pose['name']
+                    print('creating pose', name)
+                    shape = ob.shape_key_add(name)
+                    for vkey in pose['data']:
+                        b = base.data[vkey[0]].co
+                        me.shape_keys.key_blocks[name].data[vkey[0]].co = [vkey[1] + b[0], vkey[2] + b[1], vkey[3] + b[2]]
+
         # Update mesh with new data
         me.update(calc_edges=True)
 
         bpy.ops.object.editmode_toggle()
         bpy.ops.mesh.faces_shade_smooth()
+        # bpy.ops.mesh.remove_doubles()  # TODO: Only remove doubles in the same vertex group?
         bpy.ops.object.editmode_toggle()
         # Update mesh with new data
         # me.update(calc_edges=True, calc_tessface=True)
@@ -1031,12 +1234,13 @@ def convertXML(convertor, filename, use_existing=True):
             return False
 
 
-def load(operator, context, filepath, xml_converter=None, keep_xml=True):
+def load(operator, context, filepath, xml_converter=None, keep_xml=True,
+         import_shapekeys=True, import_animations=False, round_frames=False):
     global blender_version
 
     blender_version = bpy.app.version[0]*100 + bpy.app.version[1]
 
-    print("loading", str(filepath.lower()))
+    print("loading", str(filepath))
 
     filepath = filepath
     pathMeshXml = filepath
@@ -1045,7 +1249,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True):
         if convertXML(xml_converter, filepath):
             pathMeshXml = filepath + ".xml"
         else:
-            operator.report( {'ERROR'}, "Failed to convert .mesh files to .xml")
+            operator.report({'ERROR'}, "Failed to convert .mesh files to .xml")
             return {'CANCELLED'}
     else:
         return {'CANCELLED'}
@@ -1089,6 +1293,10 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True):
                 xCollectBoneData(meshData, xDocSkeletonData)
                 meshData['skeletonName'] = os.path.basename(skeletonFile[:-9])
 
+                # parse animations
+                if import_animations:
+                    xCollectAnimations(meshData, xDocSkeletonData, round_frames)
+
             else:
                 operator.report({'WARNING'}, "Failed to load linked skeleton")
                 print("Failed to load linked skeleton")
@@ -1098,9 +1306,13 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True):
         xCollectMeshData(meshData, xDocMeshData, onlyName, folder)
         xCollectMaterialData(meshData, meshMaterials, folder)
 
+        if import_shapekeys:
+            xCollectPoseData(meshData, xDocMeshData)
+
         # after collecting is done, start creating stuff#
         # create skeleton (if any) and mesh from parsed data
         bCreateMesh(meshData, folder, onlyName, pathMeshXml)
+        bCreateAnimations(meshData)
         if not keep_xml:
             # cleanup by deleting the XML file we created
             os.unlink("%s" % pathMeshXml)
