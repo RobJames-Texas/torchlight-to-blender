@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.5 02-Jan-2018"
+__version__ = "0.8.6 31-Jan-2018"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -43,6 +43,8 @@ Known issues:<br>
     * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.6   (31-Jan-2018) - Fixed crash exporting animations in
+             blender 2.79 From Kenshi add on
     * v0.8.5   (02-Jan-2018) - Optimisation: Use hashmap for duplicate
              vertex detection From Kenshi add on
     * v0.8.4   (20-Nov-2017) - Fixed animation quaternion interpolation
@@ -151,6 +153,12 @@ class VertexInfo(object):
 
 ########################################
 
+class Bone(object):
+    def __init__(self, bone):
+        self.name = bone.name
+        self.parent = bone.parent.name if bone.parent else None
+
+
 class Skeleton(object):
     def __init__(self, ob):
         self.armature = ob.find_armature()
@@ -201,8 +209,16 @@ class Skeleton(object):
             else:
                 self.rest[i] = rot * bone.matrix_local * fix * rot
 
+            # Change bones list to local structure, due to blender bone
+            # structures being cleared if you switch to edit mode again
+            self.bones[i] = Bone(bone)
+
     def bone_id(self, name):
         return self.ids[name]
+
+    def verify(self):
+        for i, bone in enumerate(self.bones):
+            print(i, bone)
 
     def export_xml(self, doc, root):
         bones = doc.createElement('bones')
@@ -211,6 +227,8 @@ class Skeleton(object):
         root.appendChild(bh)
 
         for i, bone in enumerate(self.bones):
+            print(i, bone)
+
             b = doc.createElement('bone')
             b.setAttribute('name', bone.name)
             b.setAttribute('id', str(i))
@@ -219,7 +237,7 @@ class Skeleton(object):
             if bone.parent:
                 bp = doc.createElement('boneparent')
                 bp.setAttribute('bone', bone.name)
-                bp.setAttribute('parent', bone.parent.name)
+                bp.setAttribute('parent', bone.parent)
                 bh.appendChild(bp)
 
             mat = self.rest[i]
