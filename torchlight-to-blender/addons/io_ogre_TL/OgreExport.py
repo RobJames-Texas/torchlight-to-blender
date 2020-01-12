@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.4 20-Nov-2017"
+__version__ = "0.8.5 02-Jan-2018"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -43,6 +43,8 @@ Known issues:<br>
     * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.5   (02-Jan-2018) - Optimisation: Use hashmap for duplicate
+             vertex detection From Kenshi add on
     * v0.8.4   (20-Nov-2017) - Fixed animation quaternion interpolation
              From Kenshi addon
     * v0.8.3   (06-Nov-2017) - Warning when linked skeleton file not found
@@ -641,6 +643,7 @@ def xSaveMeshData(meshData, filepath, export_skeleton):
 #        hasSharedGeometry = True
 
     # Create the minidom document
+    print("Creating " + filepath + ".xml")
     xDoc = Document()
 
     xMesh = xDoc.createElement("mesh")
@@ -831,7 +834,14 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
             # Alpha data
             if alphaLayer:
                 for fidx, col in enumerate(alphaLayer.data):
-                    alphaData[fidx] = [luminosity(col.color1), luminosity(col.color2), luminosity(col.color3)]
+                    alphaData[fidx] = [luminosity(col.color1),
+                                       luminosity(col.color2),
+                                       luminosity(col.color3)]
+
+        map = {}
+
+        import sys
+        progressScale = 1.0 / (len(meshFaces) - 1)
 
         for fidx, F in enumerate(meshFaces):
             smooth = F.use_smooth
@@ -843,6 +853,13 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
             if len(F.vertices) >= 4:
                 tris.append((F.vertices[0], F.vertices[2], F.vertices[3]))
 
+            # Progress
+            percent = fidx * progressScale
+            sys.stdout.write("\rVertices [" + '=' * int(percent*50) + '>' +
+                             '.' * int(50-percent*50) + "] " +
+                             str(int(percent*10000)/100.0) + "%   ")
+            sys.stdout.flush()
+
             for tidx, tri in enumerate(tris):
                 newFaceVx = []
                 for vidx, idx in enumerate(tri):
@@ -850,7 +867,8 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
                     u = 0
                     v = 0
                     if hasUVData:
-                        uv = uvData[0][fidx][list(tri).index(idx)]  # take 1st layer only
+                        # take 1st layer only
+                        uv = uvData[0][fidx][list(tri).index(idx)]
                         u = uv[0]
                         v = uv[1]
 
@@ -891,10 +909,16 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
                                       r, g, b, a,
                                       boneWeights, idx)
 
-                    newVxIdx = getVertexIndex(vert, _sm_verts_[F.material_index])
+                    # newVxIdx = getVertexIndex(vert, _sm_verts_[F.material_index])
+                    newVxIdx = map.get(vert)
+                    if newVxIdx == None:
+                        newVxIdx = len(_sm_verts_[F.material_index])
+                        _sm_verts_[F.material_index].append(vert)
+                        map[vert] = newVxIdx
                     newFaceVx.append(newVxIdx)
 
                 faces.append(newFaceVx)
+    print('')  # end progress line
 
     meshData['submeshes'] = []
     for matidx, mat in enumerate(materials):
@@ -1023,18 +1047,35 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
             # Alpha data
             if alphaLayer:
                 for fidx, col in enumerate(alphaLayer.data):
-                    alphaData[fidx] = [luminosity(col.color1), luminosity(col.color2), luminosity(col.color3)]
+                    alphaData[fidx] = [luminosity(col.color1),
+                                       luminosity(col.color2),
+                                       luminosity(col.color3)]
 
         vertexList = []
         newFaces = []
+
+        map = {}
+
+        import sys
+        progressScale = 1.0 / (len(meshFaces) - 1)
 
         for fidx, face in enumerate(meshFaces):
             tris = []
             tris.append((face.vertices[0], face.vertices[1], face.vertices[2]))
             if(len(face.vertices) >= 4):
-                tris.append((face.vertices[0], face.vertices[2], face.vertices[3]))
+                tris.append((face.vertices[0],
+                             face.vertices[2],
+                             face.vertices[3]))
             if SHOW_EXPORT_TRACE_VX:
-                print("_face: " + str(fidx) + " indices [" + str(list(face.vertices)) + "]")
+                print("_face: " + str(fidx) + " indices [" +
+                      str(list(face.vertices)) + "]")
+
+            # Progress
+            percent = fidx * progressScale
+            sys.stdout.write("\rVertices [" + '=' * int(percent*50) + '>' +
+                             '.' * int(50-percent*50) + "] " +
+                             str(int(percent*10000)/100.0) + "%   ")
+            sys.stdout.flush()
 
             for tri in tris:
                 newFaceVx = []
@@ -1086,7 +1127,12 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
                                       boneWeights,
                                       vertex)
 
-                    newVxIdx = getVertexIndex(vert, vertexList)
+                    # newVxIdx = getVertexIndex(vert, vertexList)
+                    newVxIdx = map.get(vert)
+                    if newVxIdx is None:
+                        newVxIdx = len(vertexList)
+                        vertexList.append(vert)
+                        map[vert] = newVxIdx
                     newFaceVx.append(newVxIdx)
 
                     if SHOW_EXPORT_TRACE_VX:
@@ -1100,6 +1146,7 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
                     print("Nface: " + str(fidx) +
                           " indices [" + str(list(newFaceVx)) + "]")
 
+        print('')  # end progress line
         # geometry
         geometry = {}
         # vertices = bpy.types.MeshVertices
@@ -1206,22 +1253,29 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                     matInfo = {}
                     allMaterials[mat.name] = matInfo
                     # ambient
-                    matInfo['ambient'] = [mat.ambient, mat.ambient, mat.ambient]
+                    matInfo['ambient'] = [mat.ambient,
+                                          mat.ambient,
+                                          mat.ambient]
                     # diffuse
-                    matInfo['diffuse'] = [mat.diffuse_color[0], mat.diffuse_color[1], mat.diffuse_color[2]]
+                    matInfo['diffuse'] = [mat.diffuse_color[0],
+                                          mat.diffuse_color[1],
+                                          mat.diffuse_color[2]]
                     # specular
-                    matInfo['specular'] = [mat.specular_color[0], mat.specular_color[1], mat.specular_color[2]]
+                    matInfo['specular'] = [mat.specular_color[0],
+                                           mat.specular_color[1],
+                                           mat.specular_color[2]]
                     # emissive
                     matInfo['emissive'] = [mat.emit, mat.emit, mat.emit]
                     # texture
                     if len(mat.texture_slots) > 0:
-                        matInfo['textures'] = []
-                        for s in mat.texture_slots:
-                            if s and s.texture.type == 'IMAGE':
-                                texInfo = {}
-                                texInfo['texture'] = s.texture.image.name
-                                texInfo['texture_path'] = s.texture.image.filepath
-                                matInfo['textures'].append(texInfo)
+                        if mat.texture_slots[0].texture:
+                            matInfo['textures'] = []
+                            for s in mat.texture_slots:
+                                if s and s.texture.type == 'IMAGE' and s.texture.image:
+                                    texInfo = {}
+                                    texInfo['texture'] = s.texture.image.name
+                                    texInfo['texture_path'] = s.texture.image.filepath
+                                    matInfo['textures'].append(texInfo)
 
 
 def calculateTangents(faces, positions, normals, uvs):

@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.4 20-Nov-2017"
+__version__ = "0.8.5 02-Jan-2018"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -43,6 +43,8 @@ Known issues:<br>
     * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.5   (02-Jan-2018) - Optimisation: Use hashmap for duplicate
+             vertex detection From Kenshi add on
     * v0.8.4   (20-Nov-2017) - Fixed animation quaternion interpolation
              From Kenshi addon
     * v0.8.3   (06-Nov-2017) - Warning when linked skeleton file not found
