@@ -20,29 +20,33 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.2 25-Sep-2017"
+__version__ = "0.8.4 20-Nov-2017"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
 
 Supported:<br>
     * import/export of basic meshes
-    * import of skeleton
+    * import/export of skeleton
+    * import/export of animations
     * import/export of vertex weights (ability to import characters and
       adjust rigs)
-    * export of vertex colour (RGB)
+    * import/export of vertex colour (RGB)
+    * import/export of vertex alpha (Uses second vertex colour
+      layer called Alpha)
+    * import/export of shape keys
     * Calculation of tangents and binormals for export
-
-Missing:<br>
-    * skeletons (export)
-    * animations
-    * shape keys
 
 Known issues:<br>
     * imported materials will loose certain informations not applicable to
       Blender when exported
+    * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.4   (20-Nov-2017) - Fixed animation quaternion interpolation
+             From Kenshi addon
+    * v0.8.3   (06-Nov-2017) - Warning when linked skeleton file not found
+             From Kenshi addon
     * v0.8.2   (25-Sep-2017) - Fixed bone translations in animations
              From Kenshi addon
     * v0.8.1   (28-Jul-2017) - Added alpha component to vertex colour
@@ -95,7 +99,11 @@ def hash_combine(x, y):
 
 
 class VertexInfo(object):
-    def __init__(self, px, py, pz, nx, ny, nz, u, v, r, g, b, a, boneWeights, original):
+    def __init__(self, px, py, pz,
+                 nx, ny, nz,
+                 u, v,
+                 r, g, b, a,
+                 boneWeights, original):
         self.px = px
         self.py = py
         self.pz = pz
@@ -146,7 +154,9 @@ class Skeleton(object):
         self.armature = ob.find_armature()
         self.name = self.armature.name
         self.ids = {}
+        self.hidden = self.armature.hide
         data = self.armature.data
+        self.armature.hide = False
 
         # get ogre bone ids - need to be in edit mode to access edit_bones
         prev = bpy.context.scene.objects.active
@@ -159,6 +169,7 @@ class Skeleton(object):
 
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         bpy.context.scene.objects.active = prev
+        self.armature.hide = self.hidden
 
         # Allocate bone ids
         index = 0
@@ -176,13 +187,15 @@ class Skeleton(object):
             self.ids[bone.name] = index
 
         # calculate bone rest matrices
-        rot = Matrix.Rotation(-1.5707963, 4, 'X')   # Rotate to y-up coordinates
-        fix = Matrix.Rotation(1.5707963, 4, 'Z')    # Fix bone axis
+        rot = Matrix.Rotation(-1.5707963, 4, 'X')  # Rotate to y-up coordinates
+        fix = Matrix.Rotation(1.5707963, 4, 'Z')   # Fix bone axis
         fix *= Matrix.Rotation(3.141592653, 4, 'X')
         self.rest = [None] * len(self.bones)
         for i, bone in enumerate(self.bones):
             if bone.parent:
-                self.rest[i] = (bone.parent.matrix_local * fix * rot).inverted() * bone.matrix_local * fix * rot
+                self.rest[i] = (bone.parent.matrix_local *
+                                fix * rot).inverted()\
+                                     * bone.matrix_local * fix * rot
             else:
                 self.rest[i] = rot * bone.matrix_local * fix * rot
 
@@ -258,9 +271,13 @@ def bCollectAnimationData(meshData):
             print('Action', act.name)
             animdata.action = act
             animation = {}
-            animation['keyframes'] = collectAnimationData(armature, act.frame_range, scene.render.fps, scene.frame_step)
+            animation['keyframes'] = collectAnimationData(armature,
+                                                          act.frame_range,
+                                                          scene.render.fps,
+                                                          scene.frame_step)
             animation['name'] = act.name
-            animation['length'] = (act.frame_range[1] - act.frame_range[0]) / scene.render.fps
+            animation['length'] = (act.frame_range[1] -
+                                   act.frame_range[0]) / scene.render.fps
             meshData['animations'].append(animation)
 
         animdata.action = currentAction
@@ -275,22 +292,27 @@ def collectAnimationData(armature, frame_range, fps, step=1):
     for bone in armature.pose.bones:
         keyframes[bone.name] = [[], [], []]   # pos, rot, scl
 
-    fix1 = Matrix([(1, 0, 0), (0, 0, 1), (0, -1, 0)])  # swap YZ and negate some
+    fix1 = Matrix([(1, 0, 0), (0, 0, 1), (0, -1, 0)])  # swap YZ & negate some
     fix2 = Matrix([(0, 1, 0), (0, 0, 1), (1, 0, 0)])
 
     # Get base matrices
     mat = {}
+    hidden = armature.hide
+    armature.hide = False
     prev = bpy.context.scene.objects.active
     bpy.context.scene.objects.active = armature
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
     bpy.ops.object.mode_set(mode='EDIT', toggle=False)
     for b in armature.data.edit_bones:
         if b.parent:
-            mat[b.name] = fix2 * b.parent.matrix.to_3x3().transposed() * b.matrix.to_3x3()
+            mat[b.name] = fix2 * \
+             b.parent.matrix.to_3x3().transposed() * \
+             b.matrix.to_3x3()
         else:
             mat[b.name] = fix1 * b.matrix.to_3x3()
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
     bpy.context.scene.objects.active = prev
+    armature.hide = hidden
 
     # Collect data
     for frame in range(int(start), int(end)+1, step):
@@ -493,13 +515,16 @@ def xSaveGeometry(geometry, xDoc, xMesh):
 
         if isTexCoordsSets:
             xUVSet = xDoc.createElement("texcoord")
-            xUVSet.setAttribute("u", toFmtStr(uvSets[i][0][0]))  # take only 1st set for now
+            # take only 1st set for now
+            xUVSet.setAttribute("u", toFmtStr(uvSets[i][0][0]))
             xUVSet.setAttribute("v", toFmtStr(1.0 - uvSets[i][0][1]))
             xVertex.appendChild(xUVSet)
 
         if isColours:
             xColour = xDoc.createElement("colour_diffuse")
-            xColour.setAttribute("value", '%g %g %g, %g' % (colours[i][0], colours[i][1], colours[i][2], colours[i][3]))
+            xColour.setAttribute("value", '%g %g %g, %g' %
+                                 (colours[i][0], colours[i][1],
+                                  colours[i][2], colours[i][3]))
             xVertex.appendChild(xColour)
 
         if isTangents:
@@ -548,7 +573,8 @@ def xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry=False):
         # boneassignments
         if 'skeleton' in meshData:
             skeleton = meshData['skeleton']
-            # xBoneAssignments = xGetBoneAssignments(meshData, xDoc, submesh['geometry']['boneassignments'])
+            # xBoneAssignments = xGetBoneAssignments(meshData, xDoc,
+            #  submesh['geometry']['boneassignments'])
             xBoneAssignments = xDoc.createElement("boneassignments")
             for vxIdx, vxBoneAsg in enumerate(submesh['geometry']['boneassignments']):
                 for boneAndWeight in vxBoneAsg:

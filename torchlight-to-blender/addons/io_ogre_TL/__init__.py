@@ -38,29 +38,33 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.2 25-Sep-2017"
+__version__ = "0.8.4 20-Nov-2017"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
 
 Supported:<br>
     * import/export of basic meshes
-    * import of skeleton
+    * import/export of skeleton
+    * import/export of animations
     * import/export of vertex weights
       (ability to import characters and adjust rigs)
-    * export of vertex colour (RGB)
+    * import/export of vertex colour (RGB)
+    * import/export of vertex alpha (Uses second vertex colour
+      layer called Alpha)
+    * import/export of shape keys
     * Calculation of tangents and binormals for export
-
-Missing:<br>
-    * skeletons (export)
-    * animations
-    * shape keys
 
 Known issues:<br>
     * imported materials will loose certain informations not applicable
       to Blender when exported
+    * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.4   (20-Nov-2017) - Fixed animation quaternion interpolation
+             From Kenshi addon
+    * v0.8.3   (06-Nov-2017) - Warning when linked skeleton file not found
+             From Kenshi addon
     * v0.8.2   (25-Sep-2017) - Fixed bone translations in animations
              From Kenshi addon
     * v0.8.1   (28-Jul-2017) - Added alpha component to vertex colour
@@ -184,7 +188,8 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
 
     xml_converter = StringProperty(
             name="XML Converter",
-            description="Ogre XML Converter program for converting between .MESH files and .XML files",
+            description="Ogre XML Converter program for converting between \
+                 .MESH files and .XML files",
             default=OGRE_XML_CONVERTER
             )
 
@@ -234,7 +239,8 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
 
     xml_converter = StringProperty(
             name="XML Converter",
-            description="Ogre XML Converter program for converting between .MESH files and .XML files",
+            description="Ogre XML Converter program for converting between\
+                 .MESH files and .XML files",
             default=OGRE_XML_CONVERTER,
             )
 
@@ -257,13 +263,15 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
 
     export_colour = BoolProperty(
             name="Export colour",
-            description="Export vertex colour data. Name a colour layer 'Alpha' to use as the alpha component",
+            description="Export vertex colour data. Name a colour layer\
+                 'Alpha' to use as the alpha component",
             default=False,
             )
 
     enable_by_material = BoolProperty(
             name="Enable By Material",
-            description="Multiple materials on a mesh will be exported as submeshes.",
+            description="Multiple materials on a mesh will be exported as\
+                 submeshes.",
             default=False,
             )
 
@@ -299,19 +307,23 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
 
     copy_textures = BoolProperty(
             name="Copy textures",
-            description="Copies material source textures to material file location",
+            description="Copies material source textures to material file\
+                 location",
             default=False,
             )
 
     export_skeleton = BoolProperty(
             name="Export skeleton",
-            description="Exports new skeleton and links the mesh to this new skeleton.\nLeave off to link with existing skeleton if applicable.",
+            description="Exports new skeleton and links the mesh to this new\
+                 skeleton.\nLeave off to link with existing skeleton if\
+                      applicable.",
             default=False,
             )
 
     export_animation = BoolProperty(
             name="Export Animation",
-            description="Export all actions attached to the selected skeleton as animations",
+            description="Export all actions attached to the selected skeleton\
+                 as animations",
             default=False,
             )
 

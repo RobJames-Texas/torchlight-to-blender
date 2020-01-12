@@ -20,29 +20,33 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.2 25-Sep-2017"
+__version__ = "0.8.4 20-Nov-2017"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
 
 Supported:<br>
     * import/export of basic meshes
-    * import of skeleton
+    * import/export of skeleton
+    * import/export of animations
     * import/export of vertex weights (ability to import characters and
       adjust rigs)
-    * export of vertex colour (RGB)
+    * import/export of vertex colour (RGB)
+    * import/export of vertex alpha (Uses second vertex colour
+      layer called Alpha)
+    * import/export of shape keys
     * Calculation of tangents and binormals for export
-
-Missing:<br>
-    * skeletons (export)
-    * animations
-    * shape keys
 
 Known issues:<br>
     * imported materials will loose certain informations not applicable to
       Blender when exported
+    * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.4   (20-Nov-2017) - Fixed animation quaternion interpolation
+             From Kenshi addon
+    * v0.8.3   (06-Nov-2017) - Warning when linked skeleton file not found
+             From Kenshi addon
     * v0.8.2   (25-Sep-2017) - Fixed bone translations in animations
              From Kenshi addon
     * v0.8.1   (28-Jul-2017) - Added alpha component to vertex colour
@@ -80,12 +84,14 @@ MESHDATA:
     ['normals'] - vectors with [x,y,z]
     ['vertexcolors'] - vectors with [r,g,b,a]
     ['texcoordsets'] - integer (number of UV sets)
-    ['uvsets'] - vectors with [u,v] * number or UV sets for vertex [[u,v]][[u,v]]...
+    ['uvsets'] - vectors with [u,v] * number or UV sets for
+                 vertex [[u,v]][[u,v]]...
     ['boneassignments']: {[boneName]} - for every bone name:
         [[vertexNumber], [weight]], [[vertexNumber], [weight]],  ..
 ['submeshes'][idx]
         [material] - string (material name)
-        [materialOrg] - original material name - for searching the in shared materials file
+        [materialOrg] - original material name
+                      - for searching the in shared materials file
         [faces] - vectors with faces [v1,v2,v3]
         [geometry] - identical to 'sharedgeometry' data content
 ['materials']
@@ -102,7 +108,8 @@ MESHDATA:
 ['boneIDs']: {[bone ID]:[bone Name]} - dictionary with ID to name
 ['skeletonName'] - name of skeleton
 
-Note: Bones store their OGREID as a custom variable so they are consistent when a mesh is exported
+Note: Bones store their OGREID as a custom variable so they are consistent
+      when a mesh is exported
 """
 
 # from Blender import *
@@ -470,14 +477,20 @@ def xCollectPoseData(meshData, xmldoc):
                 data.append((index, x, -z, y))
 
 
-def xGetSkeletonLink(xmldoc, folder):
+def xGetSkeletonLink(xmldoc, folder, operator):
     skeletonFile = "None"
     if(len(xmldoc.getElementsByTagName("skeletonlink")) > 0):
         # get the skeleton link of the mesh
-        skeleton_link = xmldoc.getElementsByTagName("skeletonlink")[0]
-        skeletonFile = os.path.join(folder, skeleton_link.getAttribute("name"))
+        skeletonLink = xmldoc.getElementsByTagName("skeletonlink")[0]
+        skeletonName = skeletonLink.getAttribute("name")
+        skeletonFile = os.path.join(folder, skeletonName)
         # check for existence of skeleton file
         if not os.path.isfile(skeletonFile):
+            operator.report({'WARNING'}, "Cannot find linked skeleton file '" +
+                                         skeletonName + "'\nIt must be in " +
+                                         "the same directory as the mesh " +
+                                         "file.")
+            print("Warning: Ogre skeleton missing: " + skeletonFile)
             skeletonFile = "None"
 
     return skeletonFile
@@ -822,9 +835,9 @@ def bCreateAnimations(meshData):
                 for i in range(1, len(data[1])):
                     a = data[1][i-1][1]
                     b = data[1][i][1]
-                    dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] * a[3]*b[3]
+                    dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3]
                     if dot < -0.8:
-                        print('fix inversion', name, target)
+                        # print('fix inversion', name, target)
                         data[1][i][1] = (-b[0], -b[1], -b[2], -b[3])
 
                 # fix translation keys - rotate by inverse rest orientation
@@ -838,9 +851,12 @@ def bCreateAnimations(meshData):
                     if data[i]:
                         path = bone.path_from_id(path_id[i])
                         for channel in range(len(data[i][0][1])):
-                            curve = action.fcurves.new(path, channel, bone.name)
+                            curve = action.fcurves.new(path,
+                                                       channel,
+                                                       bone.name)
                             for key in data[i]:
-                                curve.keyframe_points.insert(key[0], key[1][channel])
+                                curve.keyframe_points.insert(key[0],
+                                                             key[1][channel])
 
             # Add action to NLA track
             track = animdata.nla_tracks.new()
@@ -1281,7 +1297,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
     if xDocMeshData != "None":
         # skeleton data
         # get the mesh as .xml file
-        skeletonFile = xGetSkeletonLink(xDocMeshData, folder)
+        skeletonFile = xGetSkeletonLink(xDocMeshData, folder, operator)
         # there is valid skeleton link and existing file
         if(skeletonFile != "None"):
             if convertXML(xml_converter, skeletonFile):
