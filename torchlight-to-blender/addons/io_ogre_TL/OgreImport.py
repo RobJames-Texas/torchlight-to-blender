@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.9 08-Mar-2018"
+__version__ = "0.8.10 23-Jan-2019"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -40,9 +40,10 @@ Supported:<br>
 Known issues:<br>
     * imported materials will loose certain informations not applicable to
       Blender when exported
-    * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.10  (32-Jan-2019) - Fixed export when mesh has multiple uv sets
+             From Kenshi add on
     * v0.8.9   (08-Mar-2018) - Added import option to match weight maps and
              link with a previously imported skeleton
              From Kenshi add on
