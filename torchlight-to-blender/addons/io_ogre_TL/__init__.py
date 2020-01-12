@@ -38,7 +38,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.6 31-Jan-2018"
+__version__ = "0.8.7 01-Feb-2018"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -61,6 +61,8 @@ Known issues:<br>
     * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.7   (01-Feb-2018) - Scene frame rate adjusted on import,
+             Fixed quatenion normalisation. From Kenshi add on
     * v0.8.6   (31-Jan-2018) - Fixed crash exporting animations in
              blender 2.79 From Kenshi add on
     * v0.8.5   (02-Jan-2018) - Optimisation: Use hashmap for duplicate
@@ -174,9 +176,9 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
             )
 
     round_frames = BoolProperty(
-            name="Round frame numbers",
-            description="Rounds fractional keyframes to the closest frame",
-            default=False,
+            name="Adjust frame rate",
+            description="Adjust scene frame rate to match imported animation",
+            default=True,
             )
 
     import_shapekeys = BoolProperty(
@@ -226,8 +228,10 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
         row = layout.row(align=True)
         row.prop(self, "import_animations")
 
-        # row = layout.row(align=True)
-        # row.prop(self, "round_frames")
+        row = layout.row(align=True)
+        rate = layout.column()
+        rate.enabled = self.import_animations
+        rate.prop(self, "round_frames")
 
 ###############################################################################
 

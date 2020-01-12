@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.6 31-Jan-2018"
+__version__ = "0.8.7 01-Feb-2018"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -43,6 +43,8 @@ Known issues:<br>
     * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.7   (01-Feb-2018) - Scene frame rate adjusted on import,
+             Fixed quatenion normalisation. From Kenshi add on
     * v0.8.6   (31-Jan-2018) - Fixed crash exporting animations in
              blender 2.79 From Kenshi add on
     * v0.8.5   (02-Jan-2018) - Optimisation: Use hashmap for duplicate
@@ -749,6 +751,28 @@ def xGetChild(node, tag):
     return None
 
 
+def xAnalyseFPS(xDoc):
+    fps = 0
+    lastTime = 1e8
+    samples = 0
+    for container in xDoc.getElementsByTagName('animations'):
+        for animation in container.childNodes:
+            if animation.nodeType == 1 and animation.tagName == 'animation':
+                tracks = xGetChild(animation, 'tracks')
+                for track in tracks.childNodes:
+                    if track.nodeType == 1:
+                        for keyframe in xGetChild(track, 'keyframes').childNodes:
+                            if keyframe.nodeType == 1:
+                                time = float(keyframe.getAttribute('time'))
+                                if time > lastTime:
+                                    fps = max(fps, 1 / (time - lastTime))
+                                lastTime = time
+                                samples = samples + 1
+                                if samples > 100:
+                                    return round(fps, 2)    # stop here
+    return round(fps, 2)
+
+
 def xCollectAnimations(meshData, xDoc, integerFrames=True):
     if 'animations' not in meshData:
         meshData['animations'] = {}
@@ -1315,7 +1339,13 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
 
                 # parse animations
                 if import_animations:
-                    xCollectAnimations(meshData, xDocSkeletonData, round_frames)
+                    fps = xAnalyseFPS(xDocSkeletonData)
+                    if(fps and round_frames):
+                        print("Setting FPS to", fps)
+                        bpy.context.scene.render.fps = fps
+                    xCollectAnimations(meshData,
+                                       xDocSkeletonData,
+                                       round_frames)
 
             else:
                 operator.report({'WARNING'}, "Failed to load linked skeleton")
