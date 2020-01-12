@@ -20,7 +20,7 @@
 
 """
 Name: 'OGRE for Torchlight 2(*.MESH)'
-Blender: 2.59, 2.62, 2.63a, 2.77a, 2.79
+Blender: 2.63a, 2.77a, 2.79
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
 
@@ -38,7 +38,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.7 01-Feb-2018"
+__version__ = "0.8.9 08-Mar-2018"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -61,6 +61,11 @@ Known issues:<br>
     * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.9   (08-Mar-2018) - Added import option to match weight maps and
+             link with a previously imported skeleton
+             From Kenshi add on
+    * v0.8.8   (26-feb-2018) - Fixed export triangulation and custom normals
+             From Kenshi add on
     * v0.8.7   (01-Feb-2018) - Scene frame rate adjusted on import,
              Fixed quatenion normalisation. From Kenshi add on
     * v0.8.6   (31-Jan-2018) - Fixed crash exporting animations in
@@ -187,6 +192,16 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
             default=True,
             )
 
+    use_selected_skeleton = BoolProperty(
+            name='Use selected skeleton',
+            description='Link with selected armature object rather than\
+                          importing a skeleton.\nUse this for importing\
+                          skinned meshes that don\'t have their own skeleton.\
+                          \nMake sure you have the correct skeleton selected\
+                           or the weight maps may get mixed up.',
+            default=False,
+            )
+
     filter_glob = StringProperty(
             default="*.mesh;*.MESH;.xml;.XML",
             options={'HIDDEN'},
@@ -224,6 +239,12 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
 
         row = layout.row(align=True)
         row.prop(self, "import_shapekeys")
+
+        link = layout.column()
+        link.enabled = True if (context.active_object and
+                                context.active_object.type
+                                == 'ARMATURE') else False
+        link.prop(self, "use_selected_skeleton")
 
         row = layout.row(align=True)
         row.prop(self, "import_animations")

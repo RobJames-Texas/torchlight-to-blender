@@ -2,7 +2,7 @@
 
 """
 Name: 'OGRE for Torchlight 2 (*.MESH)'
-Blender: 2.59, 2.62, 2.63a, 2.78c
+Blender: 2.63a, 2.77a, 2.79
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
 
@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.7 01-Feb-2018"
+__version__ = "0.8.9 08-Mar-2018"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -43,6 +43,11 @@ Known issues:<br>
     * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.9   (08-Mar-2018) - Added import option to match weight maps and
+             link with a previously imported skeleton
+             From Kenshi add on
+    * v0.8.8   (26-feb-2018) - Fixed export triangulation and custom normals
+             From Kenshi add on
     * v0.8.7   (01-Feb-2018) - Scene frame rate adjusted on import,
              Fixed quatenion normalisation. From Kenshi add on
     * v0.8.6   (31-Jan-2018) - Fixed crash exporting animations in
@@ -780,6 +785,7 @@ def luminosity(c):
 
 def bCollectMeshData(meshData, selectedObjects, applyModifiers,
                      exportColour, exportPoses):
+    import bmesh
     for ob in selectedObjects:
         # ob = bpy.types.Object ##
         materials = []
@@ -799,79 +805,52 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
             _sm_verts_.append([])
 
         # mesh = bpy.types.Mesh ##
-        if applyModifiers:
-            mesh = ob.to_mesh(bpy.context.scene, True, 'PREVIEW')
-        else:
-            mesh = ob.data
+        mesh = ob.to_mesh(bpy.context.scene, applyModifiers, 'PREVIEW')
 
-        # blender 2.62 <-> 2.63 compatibility
-        if blender_version <= 262:
-            meshFaces = mesh.faces
-            meshUV_textures = mesh.uv_textures
-            meshVertex_colors = mesh.vertex_colors
-        elif blender_version > 262:
-            mesh.update(calc_tessface=True)
-            meshFaces = mesh.tessfaces
-            meshUV_textures = mesh.tessface_uv_textures
-            meshVertex_colors = mesh.tessface_vertex_colors
+        # use bmesh to triangulate
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+        bmesh.ops.triangulate(bm, faces=bm.faces)
+        bm.to_mesh(mesh)
+        bm.free()
 
-        # first try to collect UV data
-        uvData = []
-        hasUVData = False
-        if meshUV_textures.active:
-            hasUVData = True
-            for layer in meshUV_textures:
-                faceIdxToUVdata = {}
-                for fidx, uvface in enumerate(layer.data):
-                    faceIdxToUVdata[fidx] = uvface.uv
-                uvData.append(faceIdxToUVdata)
+        # Update final normals
+        mesh.calc_normals_split()
 
-        # Vertex colour data
-        colourData = {}
-        alphaData = {}
-        hasColourData = False
-        if exportColour and meshVertex_colors.active:
-            hasColourData = True
-            # select colour and alpha layers
-            colourLayer = meshVertex_colors.active
-            alphaLayer = None
-            for layer in meshVertex_colors:
-                if layer.name == 'Alpha' or layer.name == 'alpha':
-                    alphaLayer = layer
+        # pick uv data
+        uvData = mesh.uv_layers.active.data if mesh.uv_layers.active else None
 
-            # In case alpha layer is active
-            if colourLayer == alphaLayer:
-                colourLayer = None
-                for layer in meshVertex_colors:
-                    if layer != alphaLayer:
-                        colourLayer = layer
-                        break
-
-            if colourLayer:
-                for fidx, col in enumerate(colourLayer.data):
-                    colourData[fidx] = [col.color1, col.color2, col.color3]
-
-            # Alpha data
-            if alphaLayer:
-                for fidx, col in enumerate(alphaLayer.data):
-                    alphaData[fidx] = [luminosity(col.color1),
-                                       luminosity(col.color2),
-                                       luminosity(col.color3)]
+        # Pick colour data
+        colourData = None
+        alphaData = None
+        if mesh.vertex_colors.active and exportColour:
+            colourData = mesh.vertex_colors.active.data
+            for layer in mesh.vertex_colors:
+                if layer.name.lower() == 'alpha':
+                    alphaData = layer.data
+                    # pick a different one for colour if alpha layer is active
+                    if layer.active:
+                        colourData = None
+                        for layer in mesh.vertex_colors:
+                            if not layer.active:
+                                colourData = later.data
+                                break
+                    break
 
         map = {}
 
         import sys
-        progressScale = 1.0 / (len(meshFaces) - 1)
+        progressScale = 1.0 / (len(mesh.polygons) - 1)
 
-        for fidx, F in enumerate(meshFaces):
-            smooth = F.use_smooth
-            faces = _sm_faces_[F.material_index]
+        for fidx, face in enumerate(mesh.polygons):
+            smooth = face.use_smooth
+            faces = _sm_faces_[face.material_index]
             # Ogre only supports triangles
             tris = []
-            tris.append((F.vertices[0], F.vertices[1], F.vertices[2]))
+            tris.append((face.vertices[0], face.vertices[1], face.vertices[2]))
 
-            if len(F.vertices) >= 4:
-                tris.append((F.vertices[0], F.vertices[2], F.vertices[3]))
+            if len(face.vertices) >= 4:
+                tris.append((face.vertices[0], face.vertices[2], face.vertices[3]))
 
             # Progress
             percent = fidx * progressScale
@@ -880,66 +859,44 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
                              str(int(percent*10000)/100.0) + "%   ")
             sys.stdout.flush()
 
-            for tidx, tri in enumerate(tris):
-                newFaceVx = []
-                for vidx, idx in enumerate(tri):
-                    vxOb = mesh.vertices[idx]
-                    u = 0
-                    v = 0
-                    if hasUVData:
-                        # take 1st layer only
-                        uv = uvData[0][fidx][list(tri).index(idx)]
-                        u = uv[0]
-                        v = uv[1]
+            # should be triangles
+            if len(face.vertices) != 3:
+                raise ValueError('Polygon not a triangle')
 
-                    if smooth:
-                        nx = vxOb.normal[0]
-                        ny = vxOb.normal[1]
-                        nz = vxOb.normal[2]
-                    else:
-                        nx = F.normal[0]
-                        ny = F.normal[1]
-                        nz = F.normal[2]
+            # Add triangle
+            newFaceVx = []
+            for i in range(3):
+                vertex = face.vertices[i]
+                loop = face.loop_indices[i]
 
-                    r = 1
-                    g = 1
-                    b = 1
-                    a = 1
-                    if hasColourData:
-                        vi = list(tri).index(idx)
-                        if colourData:
-                            r, g, b = colourData[fidx][vi]
-                        if alphaData:
-                            a = alphaData[fidx][vi]
+                px, py, pz = mesh.vertices[vertex].co
+                nx, ny, nz = mesh.loops[loop].normal
+                u, v = uvData[loop].uv if uvData else (0, 0)
+                r, g, b = colourData[loop].color if colourData else (1, 1, 1)
+                a = alphaData[loop].color[0] if alphaData else 1
 
-                    px = vxOb.co[0]
-                    py = vxOb.co[1]
-                    pz = vxOb.co[2]
+                # vertex groups
+                boneWeights = {}
+                for vxGroup in mesh.vertices[vertex].groups:
+                    if vxGroup.weight > 0.01:
+                        vg = ob.vertex_groups[vxGroup.group]
+                        boneWeights[vg.name] = vxGroup.weight
 
-                    # vertex groups
-                    boneWeights = {}
-                    for vxGroup in vxOb.groups:
-                        if vxGroup.weight > 0.01:
-                            vg = ob.vertex_groups[vxGroup.group]
-                            boneWeights[vg.name] = vxGroup.weight
+                # Add vertex
+                vert = VertexInfo(px, py, pz,
+                                  nx, ny, nz,
+                                  u, v,
+                                  r, g, b, a,
+                                  boneWeights, vertex)
 
-                    vert = VertexInfo(px, py, pz,
-                                      nx, ny, nz,
-                                      u, v,
-                                      r, g, b, a,
-                                      boneWeights, idx)
+                newVxIdx = map.get(vert)
+                if newVxIdx is None:
+                    newVxIdx = len(_sm_verts_[face.material_index])
+                    _sm_verts_[face.material_index].append(vert)
+                    map[vert] = newVxIdx
+                newFaceVx.append(newVxIdx)
 
-                    # newVxIdx = getVertexIndex(vert, _sm_verts_[F.material_index])
-                    newVxIdx = map.get(vert)
-                    if newVxIdx == None:
-                        newVxIdx = len(_sm_verts_[F.material_index])
-                        _sm_verts_[F.material_index].append(vert)
-                        map[vert] = newVxIdx
-                    newFaceVx.append(newVxIdx)
-
-                faces.append(newFaceVx)
-    print('')  # end progress line
-
+            faces.append(newFaceVx)
     meshData['submeshes'] = []
     for matidx, mat in enumerate(materials):
         normals = []
@@ -984,9 +941,9 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
         subMeshData['geometry']['normals'] = normals
         subMeshData['geometry']['texcoordsets'] = len(mesh.uv_textures)
 
-        if hasUVData:
+        if uvData:
             subMeshData['geometry']['uvsets'] = uvTex
-        if hasColourData:
+        if colourData or alphaData:
             subMeshData['geometry']['colours'] = colours
 
         # need bone name to bone ID dict
@@ -1004,6 +961,7 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
 
 def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
                              exportColour, exportPoses):
+    import bmesh
     subMeshesData = []
     for ob in selectedObjects:
         subMeshData = {}
@@ -1012,64 +970,37 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
         if len(ob.data.materials) > 0:
             materialName = ob.data.materials[0].name
         # mesh = bpy.types.Mesh ##
-        if applyModifiers:
-            mesh = ob.to_mesh(bpy.context.scene, True, 'PREVIEW')
-        else:
-            mesh = ob.data
+        mesh = ob.to_mesh(bpy.context.scene, applyModifiers, 'PREVIEW')
 
-        # blender 2.62 <-> 2.63 compatibility
-        if(blender_version <= 262):
-            meshFaces = mesh.faces
-            meshUV_textures = mesh.uv_textures
-            meshVertex_colors = mesh.vertex_colors
-        elif(blender_version > 262):
-            mesh.update(calc_tessface=True)
-            meshFaces = mesh.tessfaces
-            meshUV_textures = mesh.tessface_uv_textures
-            meshVertex_colors = mesh.tessface_vertex_colors
+        # use bmesh to triangulate
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+        bmesh.ops.triangulate(bm, faces=bm.faces)
+        bm.to_mesh(mesh)
+        bm.free()
 
-        # first try to collect UV data
-        uvData = []
-        hasUVData = False
-        if meshUV_textures.active:
-            hasUVData = True
-            for layer in meshUV_textures:
-                faceIdxToUVdata = {}
-                for fidx, uvface in enumerate(layer.data):
-                    faceIdxToUVdata[fidx] = uvface.uv
-                uvData.append(faceIdxToUVdata)
+        # Update final normals
+        mesh.calc_normals_split()
 
-        # Vertex colour data
-        colourData = {}
-        alphaData = {}
-        hasColourData = False
-        if exportColour and meshVertex_colors.active:
-            hasColourData = True
-            # select colour and alpha layers
-            colourLayer = meshVertex_colors.active
-            alphaLayer = None
-            for layer in meshVertex_colors:
-                if layer.name == 'Alpha' or layer.name == 'alpha':
-                    alphaLayer = layer
+        # pick uv data
+        uvData = mesh.uv_layers.active.data if mesh.uv_layers.active else None
 
-            # In case alpha layer is active
-            if colourLayer == alphaLayer:
-                colourLayer = None
-                for layer in meshVertex_colors:
-                    if layer != alphaLayer:
-                        colourLayer = layer
-                        break
-
-            if colourLayer:
-                for fidx, col in enumerate(colourLayer.data):
-                    colourData[fidx] = [col.color1, col.color2, col.color3]
-
-            # Alpha data
-            if alphaLayer:
-                for fidx, col in enumerate(alphaLayer.data):
-                    alphaData[fidx] = [luminosity(col.color1),
-                                       luminosity(col.color2),
-                                       luminosity(col.color3)]
+        # Pick colour data
+        colourData = None
+        alphaData = None
+        if mesh.vertex_colors.active and exportColour:
+            colourData = mesh.vertex_colors.active.data
+            for layer in mesh.vertex_colors:
+                if layer.name.lower() == 'alpha':
+                    alphaData = layer.data
+                    # pick a different one for colour if alpha layer is active
+                    if layer.active:
+                        colourData = None
+                        for layer in mesh.vertex_colors:
+                            if not layer.active:
+                                colourData = later.data
+                                break
+                    break
 
         vertexList = []
         newFaces = []
@@ -1077,9 +1008,9 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
         map = {}
 
         import sys
-        progressScale = 1.0 / (len(meshFaces) - 1)
+        progressScale = 1.0 / (len(mesh.polygons) - 1)
 
-        for fidx, face in enumerate(meshFaces):
+        for fidx, face in enumerate(mesh.polygons):
             tris = []
             tris.append((face.vertices[0], face.vertices[1], face.vertices[2]))
             if(len(face.vertices) >= 4):
@@ -1097,80 +1028,48 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
                              str(int(percent*10000)/100.0) + "%   ")
             sys.stdout.flush()
 
-            for tri in tris:
-                newFaceVx = []
-                for vertex in tri:
-                    vxOb = mesh.vertices[vertex]
-                    u = 0
-                    v = 0
-                    if hasUVData:
-                        uv = uvData[0][fidx][list(tri).index(vertex)]  # take 1st layer only
-                        u = uv[0]
-                        v = uv[1]
+            # should be triangles
+            if len(face.vertices) != 3:
+                raise ValueError('Polygon not a triangle')
 
-                    r = 1
-                    g = 1
-                    b = 1
-                    a = 1
-                    if hasColourData:
-                        vi = list(tri).index(vertex)
-                        if colourData:
-                            r, g, b = colourData[fidx][vi]
-                        if alphaData:
-                            a = alphaData[fidx][vi]
+            # Add triangle
+            newFaceVx = []
+            for i in range(3):
+                vertex = face.vertices[i]
+                loop = face.loop_indices[i]
 
-                    px = vxOb.co[0]
-                    py = vxOb.co[1]
-                    pz = vxOb.co[2]
-                    nx = vxOb.normal[0]
-                    ny = vxOb.normal[1]
-                    nz = vxOb.normal[2]
+                px, py, pz = mesh.vertices[vertex].co
+                nx, ny, nz = mesh.loops[loop].normal
+                u, v = uvData[loop].uv if uvData else (0, 0)
+                r, g, b = colourData[loop].color if colourData else (1, 1, 1)
+                a = alphaData[loop].color[0] if alphaData else 1
 
-                    # vertex groups
-                    boneWeights = {}
-                    for vxGroup in vxOb.groups:
-                        if vxGroup.weight > 0.01:
-                            vg = ob.vertex_groups[vxGroup.group]
-                            boneWeights[vg.name] = vxGroup.weight
+                # vertex groups
+                boneWeights = {}
+                for vxGroup in mesh.vertices[vertex].groups:
+                    if vxGroup.weight > 0.01:
+                        vg = ob.vertex_groups[vxGroup.group]
+                        boneWeights[vg.name] = vxGroup.weight
 
-                    if SHOW_EXPORT_TRACE_VX:
-                        print("_vx: " + str(vertex) +
-                              " co: " + str([px, py, pz]) +
-                              " no: " + str([nx, ny, nz]) +
-                              " uv: " + str([u, v]) +
-                              " co: " + str([r, g, b]))
+                # Add vertex
+                vert = VertexInfo(px, py, pz,
+                                  nx, ny, nz,
+                                  u, v,
+                                  r, g, b, a,
+                                  boneWeights,
+                                  vertex)
 
-                    vert = VertexInfo(px, py, pz,
-                                      nx, ny, nz,
-                                      u, v,
-                                      r, g, b, a,
-                                      boneWeights,
-                                      vertex)
+                newVxIdx = map.get(vert)
+                if newVxIdx is None:
+                    newVxIdx = len(vertexList)
+                    vertexList.append(vert)
+                    map[vert] = newVxIdx
+                newFaceVx.append(newVxIdx)
 
-                    # newVxIdx = getVertexIndex(vert, vertexList)
-                    newVxIdx = map.get(vert)
-                    if newVxIdx is None:
-                        newVxIdx = len(vertexList)
-                        vertexList.append(vert)
-                        map[vert] = newVxIdx
-                    newFaceVx.append(newVxIdx)
+            newFaces.append(newFaceVx)
 
-                    if SHOW_EXPORT_TRACE_VX:
-                        print("Nvx: " + str(newVxIdx) +
-                              " co: " + str([px, py, pz]) +
-                              " no: " + str([nx, ny, nz]) +
-                              " uv: " + str([u, v]))
-
-                newFaces.append(newFaceVx)
-                if SHOW_EXPORT_TRACE_VX:
-                    print("Nface: " + str(fidx) +
-                          " indices [" + str(list(newFaceVx)) + "]")
-
-        print('')  # end progress line
         # geometry
         geometry = {}
-        # vertices = bpy.types.MeshVertices
-        # vertices = mesh.vertices
         faces = []
         normals = []
         positions = []
@@ -1222,9 +1121,9 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
         geometry['texcoordsets'] = len(mesh.uv_textures)
         if SHOW_EXPORT_TRACE:
             print("texcoordsets: " + str(len(mesh.uv_textures)))
-        if hasUVData:
+        if uvData:
             geometry['uvsets'] = uvTex
-        if hasColourData:
+        if colourData or alphaData:
             geometry['colours'] = colours
 
         # need bone name to bone ID dict

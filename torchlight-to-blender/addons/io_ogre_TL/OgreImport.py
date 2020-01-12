@@ -2,7 +2,7 @@
 
 """
 Name: 'OGRE for Torchlight (*.MESH)'
-Blender: 2.59, 2.62, 2.63a, 2.77a
+Blender: 2.63a, 2.77a, 2.79
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight OGRE mesh files'
 
@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.7 01-Feb-2018"
+__version__ = "0.8.9 08-Mar-2018"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -43,6 +43,11 @@ Known issues:<br>
     * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.9   (08-Mar-2018) - Added import option to match weight maps and
+             link with a previously imported skeleton
+             From Kenshi add on
+    * v0.8.8   (26-feb-2018) - Fixed export triangulation and custom normals
+             From Kenshi add on
     * v0.8.7   (01-Feb-2018) - Scene frame rate adjusted on import,
              Fixed quatenion normalisation. From Kenshi add on
     * v0.8.6   (31-Jan-2018) - Fixed crash exporting animations in
@@ -253,7 +258,7 @@ def xCollectMeshData(meshData, xmldoc, meshname, dirname):
     allObjs = []
     isSharedGeometry = False
     sharedGeom = []
-    hasSkeleton = 'skeleton' in meshData
+    hasSkeleton = 'boneIDs' in meshData
 
     # collect shared geometry
     if(len(xmldoc.getElementsByTagName('sharedgeometry')) > 0):
@@ -441,7 +446,7 @@ def xCollectBoneAssignments(meshData, xmldoc):
             if VG in boneIDtoName.keys():
                 VGNew = boneIDtoName[VG]
             else:
-                VGNew = VG
+                VGNew = 'Group ' + VG
             if VGNew not in VertexGroups.keys():
                 VertexGroups[VGNew] = []
 
@@ -905,6 +910,16 @@ def bCreateMesh(meshData, folder, name, filepath):
     # skin submeshes
     # bSkinMesh(subObjs)
 
+    # Move to parent skeleton if there
+    if 'armature' in meshData:
+        arm = meshData['armature']
+        for obj in subObjs:
+            print('Move to', arm.location)
+            obj.location = arm.location
+            obj.rotation_euler = arm.rotation_euler
+            obj.rotation_axis_angle = arm.rotation_axis_angle
+            obj.rotation_quaternion = arm.rotation_quaternion
+
     # temporarily select all imported objects
     for subOb in subObjs:
         subOb.select = True
@@ -1208,7 +1223,7 @@ def bCreateSubMeshes(meshData, meshName):
                     break
 
         # bone assignments:
-        if 'skeleton' in meshData:
+        if 'boneIDs' in meshData:
             if 'boneassignments' in geometry.keys():
                 vgroups = geometry['boneassignments']
                 for vgname, vgroup in vgroups.items():
@@ -1218,9 +1233,15 @@ def bCreateSubMeshes(meshData, meshName):
                         grp.add([v], w, 'REPLACE')
             # Give mesh object an armature modifier, using vertex groups but
             # not envelopes
+        if 'skeleton' in meshData:
             skeletonName = meshData['skeletonName']
             mod = ob.modifiers.new('OgreSkeleton', 'ARMATURE')
             mod.object = bpy.data.objects[skeletonName]  # gets the rig object
+            mod.use_bone_envelopes = False
+            mod.use_vertex_groups = True
+        elif 'armature' in meshData:
+            mod = ob.modifiers.new('OgreSkeleton', 'ARMATURE')
+            mod.object = meshData['armature']
             mod.use_bone_envelopes = False
             mod.use_vertex_groups = True
 
@@ -1230,7 +1251,8 @@ def bCreateSubMeshes(meshData, meshName):
             for pose in meshData['poses']:
                 if(pose['submesh'] == subMeshIndex):
                     if base is None:
-                        base = ob.shape_key_add('Basis')  # must have base shape
+                        # must have base shape
+                        base = ob.shape_key_add('Basis')
                     name = pose['name']
                     print('creating pose', name)
                     shape = ob.shape_key_add(name)
@@ -1278,8 +1300,23 @@ def convertXML(convertor, filename, use_existing=True):
             return False
 
 
+def getBoneNameMapFromArmature(arm):
+    # get ogre bone ids - need to be in edit mode to access edit_bones.
+    # Arm should already be the active object
+    boneMap = {}
+    bpy.context.scene.objects.active = arm
+    bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
+    bpy.ops.object.mode_set(mode='EDIT', toggle=False)
+    for bone in arm.data.edit_bones:
+        if 'OGREID' in bone:
+            boneMap[str(bone['OGREID'])] = bone.name
+    bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
+    return boneMap
+
+
 def load(operator, context, filepath, xml_converter=None, keep_xml=True,
-         import_shapekeys=True, import_animations=False, round_frames=False):
+         import_shapekeys=True, import_animations=False, round_frames=False,
+         use_selected_skeleton=False):
     global blender_version
 
     blender_version = bpy.app.version[0]*100 + bpy.app.version[1]
@@ -1326,8 +1363,20 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
         # skeleton data
         # get the mesh as .xml file
         skeletonFile = xGetSkeletonLink(xDocMeshData, folder, operator)
+
+        # use selected skeleton
+        selectedSkeleton = context.active_object if use_selected_skeleton and context.active_object and context.active_object.type == 'ARMATURE' else None
+        if selectedSkeleton:
+            map = getBoneNameMapFromArmature(selectedSkeleton)
+            if map:
+                meshData['boneIDs'] = map
+                meshData['armature'] = selectedSkeleton
+            else:
+                operator.report({'WARNING'},
+                                "Selected armature has no OGRE data.")
+
         # there is valid skeleton link and existing file
-        if(skeletonFile != "None"):
+        elif(skeletonFile != "None"):
             if convertXML(xml_converter, skeletonFile):
                 skeletonFileXml = skeletonFile + ".xml"
 
