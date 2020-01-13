@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.10 23-Jan-2019"
+__version__ = "0.8.11 26-Feb-2019"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -38,11 +38,12 @@ Supported:<br>
     * Calculation of tangents and binormals for export
 
 Known issues:<br>
-    * imported materials will loose certain informations not applicable to
+    * imported materials will lose certain informations not applicable to
       Blender when exported
-    * UVs can appear messed up when exporting non-trianglulated meshes
 
 History:<br>
+    * v0.8.11  (26-Feb-2019) - Fixed tangents and binormals for mirrorred uvs
+             From Kenshi add on
     * v0.8.10  (32-Jan-2019) - Fixed export when mesh has multiple uv sets
              From Kenshi add on
     * v0.8.9   (08-Mar-2018) - Added import option to match weight maps and
@@ -116,7 +117,10 @@ class VertexInfo(object):
                  nx, ny, nz,
                  u, v,
                  r, g, b, a,
-                 boneWeights, original):
+                 boneWeights,
+                 original,
+                 tangent,
+                 binormal):
         self.px = px
         self.py = py
         self.pz = pz
@@ -129,6 +133,8 @@ class VertexInfo(object):
         self.g = g
         self.b = b
         self.a = a
+        self.tangent = tangent
+        self.binormal = binormal
         self.boneWeights = boneWeights
         self.original = original
 
@@ -142,6 +148,8 @@ class VertexInfo(object):
         elif self.u != o.u or self.v != o.v:
             return False
         elif self.r != o.r or self.g != o.g or self.b != o.b:
+            return False
+        elif self.tangent and self.tangent[3] != o.tangent[3]:
             return False
         return True
 
@@ -157,6 +165,8 @@ class VertexInfo(object):
         result = hash_combine(result, hash(self.r))
         result = hash_combine(result, hash(self.g))
         result = hash_combine(result, hash(self.b))
+        if self.tangent:
+            result = hash_combine(result, hash(self.tangent[3]))
         return result
 
 
@@ -496,9 +506,11 @@ def xSaveGeometry(geometry, xDoc, xMesh):
         colours = geometry['colours']
 
     isTangents = False
+    isParity = False
     if 'tangents' in geometry:
         isTangents = True
         tangents = geometry['tangents']
+        isParity = geometry['parity']
 
     isBinormals = False
     if 'binormals' in geometry:
@@ -521,6 +533,8 @@ def xSaveGeometry(geometry, xDoc, xMesh):
         xVertexBuffer.setAttribute("colours_diffuse", "true")
     if isTangents:
         xVertexBuffer.setAttribute("tangents", "true")
+        if isParity:
+            xVertexBuffer.setAttribute("tangent_dimensions", "4")
     if isBinormals:
         xVertexBuffer.setAttribute("binormals", "true")
 
@@ -561,6 +575,8 @@ def xSaveGeometry(geometry, xDoc, xMesh):
             xTangent.setAttribute("x", toFmtStr(tangents[i][0]))
             xTangent.setAttribute("y", toFmtStr(tangents[i][2]))
             xTangent.setAttribute("z", toFmtStr(-tangents[i][1]))
+            if isParity:
+                xTangent.setAttribute("w", toFmtStr(tangents[i][3]))
             xVertex.appendChild(xTangent)
 
         if isBinormals:
@@ -786,7 +802,8 @@ def luminosity(c):
 
 
 def bCollectMeshData(meshData, selectedObjects, applyModifiers,
-                     exportColour, exportPoses):
+                     exportColour, exportTangents, exportBinormals,
+                     exportPoses):
     import bmesh
     for ob in selectedObjects:
         # ob = bpy.types.Object ##
@@ -796,7 +813,8 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
                 materials.append(mat)
             else:
                 print('[WARNING:] Bad material data in', ob)
-                materials.append('_missing_material_')  # borrowed from ogre scene exporter
+                # borrowed from ogre scene exporter
+                materials.append('_missing_material_')
 
         if not materials:
             materials.append('_missing_material_')
@@ -816,8 +834,13 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
         bm.to_mesh(mesh)
         bm.free()
 
-        # Update final normals
-        mesh.calc_normals_split()
+        # Calculate normals and tangents
+        if not mesh.uv_layers.active:
+            exportTangents = exportBinormals = False
+        if exportTangents:
+            mesh.calc_tangents(mesh.uv_layers.active.name)
+        else:
+            mesh.calc_normals_split()
 
         # pick uv data
         uvData = mesh.uv_layers.active.data if mesh.uv_layers.active else None
@@ -877,6 +900,9 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
                 r, g, b = colourData[loop].color if colourData else (1, 1, 1)
                 a = alphaData[loop].color[0] if alphaData else 1
 
+                tangent = mesh.loops[loop].tangent[:] + (mesh.loops[loop].bitangent_sign,) if exportTangents else None
+                binormal = mesh.loops[loop].bitangent * -1 if exportBinormals else None
+
                 # vertex groups
                 boneWeights = {}
                 for vxGroup in mesh.vertices[vertex].groups:
@@ -889,7 +915,10 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
                                   nx, ny, nz,
                                   u, v,
                                   r, g, b, a,
-                                  boneWeights, vertex)
+                                  boneWeights,
+                                  vertex,
+                                  tangent,
+                                  binormal)
 
                 newVxIdx = map.get(vert)
                 if newVxIdx is None:
@@ -902,10 +931,13 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
     meshData['submeshes'] = []
     for matidx, mat in enumerate(materials):
         normals = []
+        tangents = []
+        binormals = []
         positions = []
         uvTex = []
         colours = []
         boneAssignments = []
+        needsParity = False
 
         # vertex groups of object
         for vxInfo in _sm_verts_[matidx]:
@@ -918,6 +950,17 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
             for boneW in vxInfo.boneWeights.keys():
                 boneWeights.append([boneW, vxInfo.boneWeights[boneW]])
             boneAssignments.append(boneWeights)
+
+        if exportTangents:
+            for vxInfo in _sm_verts_[matidx]:
+                tangents.append(vxInfo.tangent)
+                binormals.append(vxInfo.binormal)
+
+            if not exportBinormals:
+                for vxInfo in _sm_verts_[matidx]:
+                    if vxInfo.tangent[3] < 0:
+                        needsParity = True
+                        break
 
         # Shape keys - poses
         poses = None
@@ -947,6 +990,11 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
             subMeshData['geometry']['uvsets'] = uvTex
         if colourData or alphaData:
             subMeshData['geometry']['colours'] = colours
+        if exportTangents:
+            subMeshData['geometry']['tangents'] = tangents
+            subMeshData['geometry']['parity'] = needsParity
+        if exportBinormals:
+            subMeshData['geometry']['binormals'] = binormals
 
         # need bone name to bone ID dict
         subMeshData['geometry']['boneassignments'] = boneAssignments
@@ -962,7 +1010,8 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
 
 
 def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
-                             exportColour, exportPoses):
+                             exportColour, exportTangents, exportBinormals,
+                             exportPoses):
     import bmesh
     subMeshesData = []
     for ob in selectedObjects:
@@ -981,8 +1030,13 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
         bm.to_mesh(mesh)
         bm.free()
 
-        # Update final normals
-        mesh.calc_normals_split()
+        # Calculate normals and tangents
+        if not mesh.uv_layers.active:
+            exportTangents = exportBinormals = False
+        if exportTangents:
+            mesh.calc_tangents(mesh.uv_layers.active.name)
+        else:
+            mesh.calc_normals_split()
 
         # pick uv data
         uvData = mesh.uv_layers.active.data if mesh.uv_layers.active else None
@@ -1046,6 +1100,9 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
                 r, g, b = colourData[loop].color if colourData else (1, 1, 1)
                 a = alphaData[loop].color[0] if alphaData else 1
 
+                tangent = mesh.loops[loop].tangent[:] + (mesh.loops[loop].bitangent_sign,) if exportTangents else None
+                binormal = mesh.loops[loop].bitangent * -1 if exportBinormals else None
+
                 # vertex groups
                 boneWeights = {}
                 for vxGroup in mesh.vertices[vertex].groups:
@@ -1059,7 +1116,9 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
                                   u, v,
                                   r, g, b, a,
                                   boneWeights,
-                                  vertex)
+                                  vertex,
+                                  tangent,
+                                  binormal)
 
                 newVxIdx = map.get(vert)
                 if newVxIdx is None:
@@ -1074,13 +1133,15 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
         geometry = {}
         faces = []
         normals = []
+        tangents = []
+        binormals = []
         positions = []
         uvTex = []
         colours = []
         # vertex groups of object
         boneAssignments = []
-
         faces = newFaces
+        needsParity = False
 
         for vxInfo in vertexList:
             positions.append([vxInfo.px, vxInfo.py, vxInfo.pz])
@@ -1092,7 +1153,17 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
             for boneW in vxInfo.boneWeights.keys():
                 boneWeights.append([boneW, vxInfo.boneWeights[boneW]])
             boneAssignments.append(boneWeights)
-            # print(boneWeights)
+
+        if exportTangents:
+            for vxInfo in vertexList:
+                tangents.append(vxInfo.tangent)
+                binormals.append(vxInfo.binormal)
+
+            if not exportBinormals:
+                for vxInfo in vertexList:
+                    if vxInfo.tangent[3] < 0:
+                        needsParity = True
+                        break
 
         if SHOW_EXPORT_TRACE_VX:
             print("uvTex:")
@@ -1127,6 +1198,11 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
             geometry['uvsets'] = uvTex
         if colourData or alphaData:
             geometry['colours'] = colours
+        if exportTangents:
+            geometry['tangents'] = tangents
+            geometry['parity'] = needsParity
+        if exportBinormals:
+            geometry['binormals'] = binormals
 
         # need bone name to bone ID dict
         geometry['boneassignments'] = boneAssignments
@@ -1197,57 +1273,6 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                                     texInfo['texture'] = s.texture.image.name
                                     texInfo['texture_path'] = s.texture.image.filepath
                                     matInfo['textures'].append(texInfo)
-
-
-def calculateTangents(faces, positions, normals, uvs):
-    tangents = [[0, 0, 0]] * len(positions)
-    for face in faces:
-        pa = positions[face[0]]
-        pb = positions[face[1]]
-        pc = positions[face[2]]
-        ab = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]]
-        ac = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]]
-
-        # project ab, ac onto normal
-        n = normals[face[0]]
-        abn = ab[0] * n[0] + ab[1] * n[1] + ab[2] * n[2]
-        acn = ac[0] * n[0] + ac[1] * n[1] + ac[2] * n[2]
-        ab[0] -= n[0] * abn
-        ab[1] -= n[1] * abn
-        ab[2] -= n[2] * abn
-        ac[0] -= n[0] * acn
-        ac[1] -= n[1] * acn
-        ac[2] -= n[2] * acn
-
-        # texture coordinate deltas
-        uva = uvs[face[0]][0]
-        uvb = uvs[face[1]][0]
-        uvc = uvs[face[2]][0]
-        abu = uvb[0] - uva[0]
-        abv = uvb[1] - uva[1]
-        acu = uvc[0] - uva[0]
-        acv = uvc[1] - uva[1]
-        if acv*abu > abv*acu:
-            acv = -acv
-            abv = -abv
-
-        # tangent
-        tx = ac[0] * abv - ab[0] * acv
-        ty = ac[1] * abv - ab[1] * acv
-        tz = ac[2] * abv - ab[2] * acv
-
-        # Normalise
-        l = math.sqrt(tx*tx + ty*ty + tz * tz)
-        if l != 0:
-            tx = tx / l
-            ty = ty / l
-            tz = tz / l
-
-        tangents[face[0]] = [tx, ty, tz]
-        tangents[face[1]] = [tx, ty, tz]
-        tangents[face[2]] = [tx, ty, tz]
-
-    return tangents
 
 
 def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
@@ -1336,42 +1361,23 @@ def save(operator, context, filepath,
     bCollectSkeletonData(blenderMeshData, selectedObjects)
     # mesh
     if enable_by_material:
-        bCollectMeshData(blenderMeshData, selectedObjects, apply_modifiers, export_colour, export_poses)
+        bCollectMeshData(blenderMeshData,
+                         selectedObjects,
+                         apply_modifiers,
+                         export_colour,
+                         export_tangents,
+                         export_binormals,
+                         export_poses)
     else:
-        bCollectMeshDataOriginal(blenderMeshData, selectedObjects, apply_modifiers, export_colour, export_poses)
+        bCollectMeshDataOriginal(blenderMeshData,
+                                 selectedObjects,
+                                 apply_modifiers,
+                                 export_colour,
+                                 export_tangents,
+                                 export_binormals,
+                                 export_poses)
     # materials
     bCollectMaterialData(blenderMeshData, selectedObjects)
-
-    # Calculate tangents
-    if export_tangents:
-        submeshes = blenderMeshData['submeshes']
-        for mesh in submeshes:
-            if SHOW_EXPORT_TRACE:
-                for key in mesh.keys():
-                    print(key)
-
-            if 'uvsets' not in mesh['geometry']:
-                operator.report({'WARNING'}, "Cannot export tangents with no UV maps.")
-                break
-
-            faces = mesh['faces']
-            geometry = mesh['geometry']
-            positions = geometry['positions']
-            normals = geometry['normals']
-            uvs = geometry['uvsets']
-
-            tangents = calculateTangents(faces, positions, normals, uvs)
-            geometry['tangents'] = tangents
-
-            # Binormals
-            if export_binormals:
-                binormals = []
-                for i in range(len(positions)):
-                    bx = normals[i][1] * tangents[i][2] - normals[i][2] * tangents[i][1]
-                    by = normals[i][2] * tangents[i][0] - normals[i][0] * tangents[i][2]
-                    bz = normals[i][0] * tangents[i][1] - normals[i][1] * tangents[i][0]
-                    binormals.append([bx, by, bz])
-                geometry['binormals'] = binormals
 
     if export_animation:
         bCollectAnimationData(blenderMeshData)
@@ -1390,9 +1396,16 @@ def save(operator, context, filepath,
 
     xSaveMeshData(blenderMeshData, filepath, export_skeleton)
 
-    xSaveMaterialData(filepath, blenderMeshData, overwrite_material, copy_textures)
+    xSaveMaterialData(filepath,
+                      blenderMeshData,
+                      overwrite_material,
+                      copy_textures)
 
-    if not XMLtoOGREConvert(blenderMeshData, filepath, xml_converter, export_skeleton, keep_xml):
+    if not XMLtoOGREConvert(blenderMeshData,
+                            filepath,
+                            xml_converter,
+                            export_skeleton,
+                            keep_xml):
         operator.report({'WARNING'}, "Failed to convert .xml files to .mesh")
 
     print("done.")
