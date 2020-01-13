@@ -38,7 +38,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.13 19-Mar-2019"
+__version__ = "0.8.14 14-May-2019"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -60,6 +60,8 @@ Known issues:<br>
       to Blender when exported
 
 History:<br>
+    * v0.8.14  (14-May-2019) - Fixed blender deleting zero length bones
+             From Kenshi add on
     * v0.8.13  (19-Mar-2019) - Exporting material files is optional
              From Kenshi add on
     * v0.8.12  (14-Mar-2019) - Fixed error exporting animation scale keyframes
@@ -115,7 +117,7 @@ bl_info = {
     "name": "Torchlight 2 MESH format",
     "author": "Rob James",
     "blender": (2, 5, 9),
-    "version": (0, 8, 13),
+    "version": (0, 8, 14),
     "api": 35622,
     "location": "File > Import-Export",
     "description": ("Import-Export Torchlight 2 Model, Import MESH, UV's, "

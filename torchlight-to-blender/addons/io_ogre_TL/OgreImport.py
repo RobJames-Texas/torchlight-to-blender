@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.13 19-Mar-2019"
+__version__ = "0.8.14 14-May-2019"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -42,6 +42,8 @@ Known issues:<br>
       Blender when exported
 
 History:<br>
+    * v0.8.14  (14-May-2019) - Fixed blender deleting zero length bones
+             From Kenshi add on
     * v0.8.13  (19-Mar-2019) - Exporting material files is optional
              From Kenshi add on
     * v0.8.12  (14-Mar-2019) - Fixed error exporting animation scale keyframes
@@ -744,11 +746,8 @@ def VectorSum(vec1, vec2):
     return vecout
 
 
-def calcBoneLength(vec):
-    return math.sqrt(vec[0]**2+vec[1]**2+vec[2]**2)
-
-
 ###############################################################################
+
 def quaternionFromAngleAxis(angle, x, y, z):
     r = angle * 0.5
     s = math.sin(r)
@@ -956,6 +955,16 @@ def bCreateSkeleton(meshData, name):
     scn.objects.active = rig
     scn.update()
 
+    # Chose default length of bones with no children
+    averageBone = 0
+    for b in bonesData.values():
+        childLength = b['position'][0]
+        averageBone += childLength
+    averageBone /= len(bonesData)
+    if averageBone == 0:
+        averageBone = 0.2
+    print("Default bone length:", averageBone)
+
     bpy.ops.object.mode_set(mode='EDIT')
     for bone in bonesData.keys():
         boneData = bonesData[bone]
@@ -972,9 +981,12 @@ def bCreateSkeleton(meshData, name):
         # boneObj.head = boneData['posHAS']
         # headPos = boneData['posHAS']
         headPos = boneData['posHAS']
-        tailVector = 0.2
-        if len(children) == 1:
-            tailVector = calcBoneLength(bonesData[children[0]]['position'])
+        tailVector = 0
+        if len(children) > 0:
+            for child in children:
+                tailVector = max(tailVector, bonesData[child]['position'][0])
+        if tailVector == 0:
+            tailVector = averageBone
 
         # boneObj.head = Vector([headPos[0],-headPos[2],headPos[1]])
         # boneObj.tail = Vector([headPos[0],-headPos[2],headPos[1] + tailVector])
