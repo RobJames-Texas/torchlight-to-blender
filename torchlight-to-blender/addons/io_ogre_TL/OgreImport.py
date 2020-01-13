@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.14 14-May-2019"
+__version__ = "0.8.15 17-Jul-2019"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -42,6 +42,8 @@ Known issues:<br>
       Blender when exported
 
 History:<br>
+    * v0.8.15  (17-Jul-2019) - Added option to import normals
+             From Kenshi add on
     * v0.8.14  (14-May-2019) - Fixed blender deleting zero length bones
              From Kenshi add on
     * v0.8.13  (19-Mar-2019) - Exporting material files is optional
@@ -201,7 +203,7 @@ def xCollectFaceData(facedata):
     return faces
 
 
-def xCollectVertexData(data):
+def xCollectVertexData(data, useNormals):
     vertexdata = {}
     vertices = []
     normals = []
@@ -219,7 +221,7 @@ def xCollectVertexData(data):
                             vertices.append([x, y, z])
                 vertexdata['positions'] = vertices
 
-            if vb.hasAttribute('normals'):
+            if vb.hasAttribute('normals') and useNormals:
                 for vertex in vb.getElementsByTagName('vertex'):
                     for vn in vertex.childNodes:
                         if vn.localName == 'normal':
@@ -260,7 +262,7 @@ def xCollectVertexData(data):
     return vertexdata
 
 
-def xCollectMeshData(meshData, xmldoc, meshname, dirname):
+def xCollectMeshData(meshData, xmldoc, meshname, dirname, useNormals):
     # global has_skeleton
     faceslist = []
     subMeshData = []
@@ -273,7 +275,7 @@ def xCollectMeshData(meshData, xmldoc, meshname, dirname):
     if(len(xmldoc.getElementsByTagName('sharedgeometry')) > 0):
         isSharedGeometry = True
         for subnodes in xmldoc.getElementsByTagName('sharedgeometry'):
-            meshData['sharedgeometry'] = xCollectVertexData(subnodes)
+            meshData['sharedgeometry'] = xCollectVertexData(subnodes, useNormals)
 
         if hasSkeleton:
             for subnodes in xmldoc.getElementsByTagName('boneassignments'):
@@ -300,7 +302,7 @@ def xCollectMeshData(meshData, xmldoc, meshname, dirname):
 
                     if (subnodes.localName == 'geometry'):
                         vertexcount = int(subnodes.getAttributeNode('vertexcount').value)
-                        sm['geometry'] = xCollectVertexData(subnodes)
+                        sm['geometry'] = xCollectVertexData(subnodes, useNormals)
 
                     if hasSkeleton and subnodes.localName == 'boneassignments' and isSharedGeometry is False:
                         sm['geometry']['boneassignments'] = xCollectBoneAssignments(meshData, subnodes)
@@ -1080,6 +1082,31 @@ def bCreateSkeleton(meshData, name):
 #    bpy.ops.object.mode_set(mode='OBJECT')
 
 
+def bMergeVertices(subMesh):
+    # This sort of works, but leaves all uv seams as sharp.
+    geometry = subMesh['geometry']
+    vertices = geometry['positions']
+    normals = geometry['normals']
+    uvsets = geometry['uvsets'] if 'uvsets' in geometry else None
+    lookup = {}
+    map = [i for i in range(len(vertices))]
+    for i in range(len(vertices)):
+        vert = vertices[i]
+        norm = normals[i]
+        uv = tuple(uvsets[i][0]) if uvsets else None
+        item = (tuple(vert), tuple(norm), uv)
+        target = lookup.get(item)
+        if target is None:
+            lookup[item] = i
+        else:
+            map[i] = target
+    # update faces
+    faces = subMesh['faces']
+    for face in faces:
+        for i in range(len(face)):
+            face[i] = map[face[i]]
+
+
 def bCreateSubMeshes(meshData, meshName):
     allObjects = []
     submeshes = meshData['submeshes']
@@ -1087,6 +1114,7 @@ def bCreateSubMeshes(meshData, meshName):
     for subMeshIndex in range(len(submeshes)):
         subMeshData = submeshes[subMeshIndex]
         subMeshName = subMeshData['material']
+
         # Create mesh and object
         me = bpy.data.meshes.new(subMeshName)
         ob = bpy.data.objects.new(subMeshName, me)
@@ -1281,13 +1309,33 @@ def bCreateSubMeshes(meshData, meshName):
 
         # Update mesh with new data
         me.update(calc_edges=True)
+        me.use_auto_smooth = True
 
         bpy.ops.object.editmode_toggle()
         bpy.ops.mesh.faces_shade_smooth()
-        # bpy.ops.mesh.remove_doubles()  # TODO: Only remove doubles in the same vertex group?
+        # bpy.ops.mesh.remove_doubles()
+        # TODO: Only remove doubles in the same vertex group?
         bpy.ops.object.editmode_toggle()
-        # Update mesh with new data
-        # me.update(calc_edges=True, calc_tessface=True)
+
+        # try to set custom normals
+        if hasNormals:
+            noChange = len(me.loops) == len(faces)*3
+            if not noChange:
+                print('Removed',  len(faces) - len(me.loops)/3, 'faces')
+            split = []
+            polyIndex = 0
+            for face in faces:
+                if noChange or matchFace(face, verts, me, polyIndex):
+                    polyIndex += 1
+                    for vx in face:
+                        split.append(normals[vx])
+
+            if len(split) == len(me.loops):
+                me.normals_split_custom_set(split)
+            else:
+                # operator.report( {'WARNING'}, "Failed to import mesh normals")
+                print('Warning: Failed to import mesh normals', polyIndex,
+                      '/', len(me.polygons))
 
         allObjects.append(ob)
 
@@ -1299,6 +1347,23 @@ def bCreateSubMeshes(meshData, meshName):
             area.spaces.active.viewport_shade = 'TEXTURED'
 
     return allObjects
+
+
+def matchFace(face, vertices, mesh, index):
+    if index >= len(mesh.polygons):
+        return False  # ?? err - what broke
+    loop = mesh.polygons[index].loop_start
+    for v in face:
+        vi = mesh.loops[loop].vertex_index
+        vx = mesh.vertices[vi].co
+
+        if (vx-Vector(vertices[v])).length_squared > 1e-6:
+            return False
+
+        # if vx != Vector(vertices[v]):
+        #    return False  # May need threshold ?
+        loop += 1
+    return True
 
 
 def convertXML(convertor, filename, use_existing=True):
@@ -1334,8 +1399,8 @@ def getBoneNameMapFromArmature(arm):
 
 
 def load(operator, context, filepath, xml_converter=None, keep_xml=True,
-         import_shapekeys=True, import_animations=False, round_frames=False,
-         use_selected_skeleton=False):
+         import_normals=True, import_shapekeys=True, import_animations=False,
+         round_frames=False, use_selected_skeleton=False):
     global blender_version
 
     blender_version = bpy.app.version[0]*100 + bpy.app.version[1]
@@ -1345,7 +1410,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
     filepath = filepath
     pathMeshXml = filepath
     # get the mesh as .xml file
-    if ".mesh" in filepath.lower():
+    if filepath.lower().endswith(".mesh"):
         if convertXML(xml_converter, filepath):
             pathMeshXml = filepath + ".xml"
         else:
@@ -1421,7 +1486,8 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
 
         # collect mesh data
         print("collecting mesh data...")
-        xCollectMeshData(meshData, xDocMeshData, onlyName, folder)
+        xCollectMeshData(meshData, xDocMeshData,
+                         onlyName, folder, import_normals)
         xCollectMaterialData(meshData, meshMaterials, folder)
 
         if import_shapekeys:

@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.14 14-May-2019"
+__version__ = "0.8.15 17-Jul-2019"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -42,6 +42,8 @@ Known issues:<br>
       Blender when exported
 
 History:<br>
+    * v0.8.15  (17-Jul-2019) - Added option to import normals
+             From Kenshi add on
     * v0.8.14  (14-May-2019) - Fixed blender deleting zero length bones
              From Kenshi add on
     * v0.8.13  (19-Mar-2019) - Exporting material files is optional
@@ -512,11 +514,10 @@ def xSaveGeometry(geometry, xDoc, xMesh):
         colours = geometry['colours']
 
     isTangents = False
-    isParity = False
     if 'tangents' in geometry:
         isTangents = True
         tangents = geometry['tangents']
-        isParity = geometry['parity']
+    isParity = isTangents and geometry['parity']
 
     isBinormals = False
     if 'binormals' in geometry:

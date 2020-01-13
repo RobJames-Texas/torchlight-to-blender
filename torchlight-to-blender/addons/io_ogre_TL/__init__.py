@@ -38,7 +38,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.14 14-May-2019"
+__version__ = "0.8.15 17-Jul-2019"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -60,6 +60,8 @@ Known issues:<br>
       to Blender when exported
 
 History:<br>
+    * v0.8.15  (17-Jul-2019) - Added option to import normals
+             From Kenshi add on
     * v0.8.14  (14-May-2019) - Fixed blender deleting zero length bones
              From Kenshi add on
     * v0.8.13  (19-Mar-2019) - Exporting material files is optional
@@ -117,7 +119,7 @@ bl_info = {
     "name": "Torchlight 2 MESH format",
     "author": "Rob James",
     "blender": (2, 5, 9),
-    "version": (0, 8, 14),
+    "version": (0, 8, 15),
     "api": 35622,
     "location": "File > Import-Export",
     "description": ("Import-Export Torchlight 2 Model, Import MESH, UV's, "
@@ -184,6 +186,12 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
             default=False,
             )
 
+    import_normals = BoolProperty(
+            name="Import Normals",
+            description="Import custom mesh normals",
+            default=True,
+            )
+
     import_animations = BoolProperty(
             name="Import animation",
             description="Import animations as actions",
@@ -241,14 +249,10 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
     def draw(self, context):
         layout = self.layout
 
-        row = layout.row(align=True)
-        row.prop(self, "xml_converter")
-
-        row = layout.row(align=True)
-        row.prop(self, "keep_xml")
-
-        row = layout.row(align=True)
-        row.prop(self, "import_shapekeys")
+        layout.prop(self, "xml_converter")
+        layout.prop(self, "keep_xml")
+        layout.prop(self, "import_normals")
+        layout.prop(self, "import_shapekeys")
 
         link = layout.column()
         link.enabled = True if (context.active_object and
@@ -256,8 +260,7 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
                                 == 'ARMATURE') else False
         link.prop(self, "use_selected_skeleton")
 
-        row = layout.row(align=True)
-        row.prop(self, "import_animations")
+        layout.prop(self, "import_animations")
 
         row = layout.row(align=True)
         rate = layout.column()
