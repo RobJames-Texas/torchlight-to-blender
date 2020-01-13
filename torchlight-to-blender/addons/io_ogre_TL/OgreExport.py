@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.15 17-Jul-2019"
+__version__ = "0.8.16 15-Oct-2019"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -42,6 +42,8 @@ Known issues:<br>
       Blender when exported
 
 History:<br>
+    * v0.8.16  (15-Oct-2019) - Fixed exporting vertex colour + vertex alpha
+             From Kenshi add on
     * v0.8.15  (17-Jul-2019) - Added option to import normals
              From Kenshi add on
     * v0.8.14  (14-May-2019) - Fixed blender deleting zero length bones
@@ -866,7 +868,7 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
                         colourData = None
                         for layer in mesh.vertex_colors:
                             if not layer.active:
-                                colourData = later.data
+                                colourData = layer.data
                                 break
                     break
 
@@ -1063,7 +1065,7 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
                         colourData = None
                         for layer in mesh.vertex_colors:
                             if not layer.active:
-                                colourData = later.data
+                                colourData = layer.data
                                 break
                     break
 
