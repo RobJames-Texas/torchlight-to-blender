@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.12 14-Mar-2019"
+__version__ = "0.8.13 19-Mar-2019"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -42,6 +42,8 @@ Known issues:<br>
       Blender when exported
 
 History:<br>
+    * v0.8.13  (19-Mar-2019) - Exporting material files is optional
+             From Kenshi add on
     * v0.8.12  (14-Mar-2019) - Fixed error exporting animation scale keyframes
              From Kenshi add on
     * v0.8.11  (26-Feb-2019) - Fixed tangents and binormals for mirrorred uvs
@@ -769,23 +771,24 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
     # try to copy material textures to destination
     if copyTextures:
         for matName, matInfo in allMatData.items():
-            if 'texture' in matInfo:
-                if 'texture_path' in matInfo:
-                    srcTextureFile = matInfo['texture_path']
-                    baseDirName = os.path.dirname(bpy.data.filepath)
-                    if srcTextureFile[0:2] == "//":
-                        print("Converting relative image name \"%s\"" % srcTextureFile)
-                        srcTextureFile = os.path.join(baseDirName, srcTextureFile[2:])
-                    if fileExist(srcTextureFile):
-                        # copy texture to dir
-                        print("Copying texture \"%s\"" % srcTextureFile)
-                        try:
-                            print(" to \"%s\"" % os.path.dirname(matFile))
-                            shutil.copy(srcTextureFile, os.path.dirname(matFile))
-                        except:
-                            print("Error copying \"%s\"" % srcTextureFile)
-                    else:
-                        print("Can't copy texture \"%s\" because file does not exists!" % srcTextureFile)
+            if 'textures' in matInfo:
+                for texInfo in matInfo['textures']:
+                    if 'texture_path' in texInfo:
+                        srcTextureFile = texInfo['texture_path']
+                        baseDirName = os.path.dirname(bpy.data.filepath)
+                        if srcTextureFile[0:2] == "//":
+                            print("Converting relative image name \"%s\"" % srcTextureFile)
+                            srcTextureFile = os.path.join(baseDirName, srcTextureFile[2:])
+                        if fileExist(srcTextureFile):
+                            # copy texture to dir
+                            print("Copying texture \"%s\"" % srcTextureFile)
+                            try:
+                                print(" to \"%s\"" % os.path.dirname(matFile))
+                                shutil.copy(srcTextureFile, os.path.dirname(matFile))
+                            except:
+                                print("Error copying \"%s\"" % srcTextureFile)
+                        else:
+                            print("Can't copy texture \"%s\" because file does not exists!" % srcTextureFile)
 
 
 def getVertexIndex(vertexInfo, vertexList):
@@ -1020,8 +1023,9 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
         subMeshData = {}
         # ob = bpy.types.Object ##
         materialName = ob.name
-        if len(ob.data.materials) > 0:
-            materialName = ob.data.materials[0].name
+        for m in ob.data.materials:
+            if m:
+                materialName = m.name
         # mesh = bpy.types.Mesh ##
         mesh = ob.to_mesh(bpy.context.scene, applyModifiers, 'PREVIEW')
 
@@ -1248,7 +1252,7 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
         if ob.type == 'MESH' and len(ob.data.materials) > 0:
             for mat in ob.data.materials:
                 # mat = bpy.types.Material ##
-                if mat.name not in allMaterials:
+                if mat and mat.name not in allMaterials:
                     matInfo = {}
                     allMaterials[mat.name] = matInfo
                     # ambient
@@ -1267,14 +1271,13 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                     matInfo['emissive'] = [mat.emit, mat.emit, mat.emit]
                     # texture
                     if len(mat.texture_slots) > 0:
-                        if mat.texture_slots[0].texture:
-                            matInfo['textures'] = []
-                            for s in mat.texture_slots:
-                                if s and s.texture.type == 'IMAGE' and s.texture.image:
-                                    texInfo = {}
-                                    texInfo['texture'] = s.texture.image.name
-                                    texInfo['texture_path'] = s.texture.image.filepath
-                                    matInfo['textures'].append(texInfo)
+                        matInfo['textures'] = []
+                        for slot in mat.texture_slots:
+                            if slot and slot.texture.type == 'IMAGE' and slot.texture.image:
+                                texInfo = {}
+                                texInfo['texture'] = slot.texture.image.name
+                                texInfo['texture_path'] = slot.texture.image.filepath
+                                matInfo['textures'].append(texInfo)
 
 
 def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
@@ -1317,6 +1320,7 @@ def save(operator, context, filepath,
          tangent_parity=False,
          apply_transform=True,
          apply_modifiers=True,
+         export_materials=True,
          overwrite_material=False,
          copy_textures=False,
          export_skeleton=False,
@@ -1379,7 +1383,8 @@ def save(operator, context, filepath,
                                  export_binormals,
                                  export_poses)
     # materials
-    bCollectMaterialData(blenderMeshData, selectedObjects)
+    if export_materials:
+        bCollectMaterialData(blenderMeshData, selectedObjects)
 
     if export_animation:
         bCollectAnimationData(blenderMeshData)
