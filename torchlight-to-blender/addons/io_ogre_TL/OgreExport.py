@@ -6,7 +6,7 @@ Blender: 2.63a, 2.77a, 2.79
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
 
-Author: Rob James
+Author: Rob James,
 Original Author: Dusho
 
 There were some great updates added to a forked version of this script
@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.16 15-Oct-2019"
+__version__ = "0.8.17 17-Jan-2020"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -36,12 +36,15 @@ Supported:<br>
       layer called Alpha)
     * import/export of shape keys
     * Calculation of tangents and binormals for export
+    * Toggle of edge lists during export
 
 Known issues:<br>
     * imported materials will lose certain informations not applicable to
       Blender when exported
 
 History:<br>
+    * v0.8.17  (17-Jan-2020)- Updated user settings panel to be more
+             configurable. Added toggle for edge lists.
     * v0.8.16  (15-Oct-2019) - Fixed exporting vertex colour + vertex alpha
              From Kenshi add on
     * v0.8.15  (17-Jul-2019) - Added option to import normals
@@ -1286,7 +1289,7 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
 
 
 def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
-                     export_skeleton, keep_xml):
+                     export_skeleton, keep_xml, export_edgelists):
 
     if ogreXMLconverter is None:
         return False
@@ -1295,7 +1298,10 @@ def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
     # use Ogre XML converter  xml -> binary mesh
     try:
         xmlFilepath = filepath + ".xml"
-        subprocess.call([ogreXMLconverter, xmlFilepath])
+        if export_edgelists:
+            subprocess.call([ogreXMLconverter, xmlFilepath])
+        else:  # if other args are needed, build them ahead of time
+            subprocess.call([ogreXMLconverter, "-e", xmlFilepath])
         # remove XML file if successfully converted
         if keep_xml is False and os.path.isfile(filepath):
             os.unlink("%s" % xmlFilepath)
@@ -1319,6 +1325,7 @@ def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
 def save(operator, context, filepath,
          xml_converter=None,
          keep_xml=False,
+         export_edgelists=False,
          export_tangents=False,
          export_binormals=False,
          export_colour=False,
@@ -1370,7 +1377,9 @@ def save(operator, context, filepath,
 
     # skeleton
     bCollectSkeletonData(blenderMeshData, selectedObjects)
+
     # mesh
+    # TODO: Turn this into a factory pattern. Need to follow DRY.
     if enable_by_material:
         bCollectMeshData(blenderMeshData,
                          selectedObjects,
@@ -1417,7 +1426,8 @@ def save(operator, context, filepath,
                             filepath,
                             xml_converter,
                             export_skeleton,
-                            keep_xml):
+                            keep_xml,
+                            export_edgelists):
         operator.report({'WARNING'}, "Failed to convert .xml files to .mesh")
 
     print("done.")

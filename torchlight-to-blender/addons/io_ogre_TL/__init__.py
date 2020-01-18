@@ -24,7 +24,7 @@ Blender: 2.63a, 2.77a, 2.79
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
 
-Author: Rob James
+Author: Rob James, Dusho, Someone
 Original Author: Dusho
 
 There were some great updates added to a forked version of this script
@@ -38,7 +38,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.16 15-Oct-2019"
+__version__ = "0.8.17 17-Jan-2020"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -54,12 +54,15 @@ Supported:<br>
       layer called Alpha)
     * import/export of shape keys
     * Calculation of tangents and binormals for export
+    * Toggle of edge lists during export
 
 Known issues:<br>
     * imported materials will lose certain informations not applicable
       to Blender when exported
 
 History:<br>
+    * v0.8.17  (17-Jan-2020)- Updated user settings panel to be more
+             configurable. Added toggle for edge lists.
     * v0.8.16  (15-Oct-2019) - Fixed exporting vertex colour + vertex alpha
              From Kenshi add on
     * v0.8.15  (17-Jul-2019) - Added option to import normals
@@ -140,6 +143,7 @@ if "bpy" in locals():
         imp.reload(OgreExport)
 
 import bpy
+import logging
 from bpy.props import (BoolProperty,
                        FloatProperty,
                        StringProperty,
@@ -150,10 +154,7 @@ from bpy_extras.io_utils import (ExportHelper,
                                  path_reference_mode,
                                  axis_conversion,
                                  )
-
-
-# Path for your OgreXmlConverter
-OGRE_XML_CONVERTER = "OgreXMLConverter.exe"
+from . import config
 
 
 def findConverter(p):
@@ -172,6 +173,24 @@ def findConverter(p):
     # Fail
     print('Could not find xml converter', p)
     return None
+
+
+class OgreTlAddonPreferences(bpy.types.AddonPreferences):
+    bl_idname = __name__
+
+    def apply_preferences_to_config(self, context):
+        config.update_from_addon_preference(context)
+
+    OGRETOOLS_XML_CONVERTER = bpy.props.StringProperty(
+        name="OGRETOOLS_XML_CONVERTER",
+        subtype='FILE_PATH',
+        default=config.CONFIG['OGRETOOLS_XML_CONVERTER'],
+        update=apply_preferences_to_config
+    )
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "OGRETOOLS_XML_CONVERTER")
 
 
 class ImportOgre(bpy.types.Operator, ImportHelper):
@@ -227,19 +246,12 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
             options={'HIDDEN'},
             )
 
-    xml_converter = StringProperty(
-            name="XML Converter",
-            description="Ogre XML Converter program for converting between \
-                 .MESH files and .XML files",
-            default=OGRE_XML_CONVERTER
-            )
-
     def execute(self, context):
         # print("Selected: " + context.active_object.name)
         from . import OgreImport
 
         keywords = self.as_keywords(ignore=("filter_glob",))
-        keywords['xml_converter'] = findConverter(keywords['xml_converter'])
+        keywords['xml_converter'] = findConverter(config.get('OGRETOOLS_XML_CONVERTER'))
 
         print('converter', keywords['xml_converter'])
 
@@ -251,7 +263,6 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
     def draw(self, context):
         layout = self.layout
 
-        layout.prop(self, "xml_converter")
         layout.prop(self, "keep_xml")
         layout.prop(self, "import_normals")
         layout.prop(self, "import_shapekeys")
@@ -281,12 +292,11 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
 
     filename_ext = ".mesh"
 
-    xml_converter = StringProperty(
-            name="XML Converter",
-            description="Ogre XML Converter program for converting between\
-                 .MESH files and .XML files",
-            default=OGRE_XML_CONVERTER,
-            )
+    export_edgelists = BoolProperty(
+            name="Export edge lists",
+            description="Export edge list data for the mesh",
+            default=False,
+    )
 
     export_tangents = BoolProperty(
             name="Export tangents",
@@ -393,7 +403,7 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
         from mathutils import Matrix
 
         keywords = self.as_keywords(ignore=("check_existing", "filter_glob"))
-        keywords['xml_converter'] = findConverter(keywords['xml_converter'])
+        keywords['xml_converter'] = findConverter(config.get('OGRETOOLS_XML_CONVERTER'))
 
         bpy.context.window.cursor_set("WAIT")
         result = OgreExport.save(self, context, **keywords)
@@ -408,6 +418,7 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
         xml.prop(self, "keep_xml")
 
         mesh = layout.box()
+        mesh.prop(self, "export_edgelists")
         mesh.prop(self, "enable_by_material")
         mesh.prop(self, "export_tangents")
         mesh.prop(self, "export_binormals")
@@ -438,17 +449,26 @@ def menu_func_export(self, context):
 
 
 def register():
+    logging.info('Starting io_ogre_TL %s', bl_info["version"])
     bpy.utils.register_module(__name__)
 
     bpy.types.INFO_MT_file_import.append(menu_func_import)
     bpy.types.INFO_MT_file_export.append(menu_func_export)
 
+    # bpy.utils.register_class(OgreTlAddonPreferences)
+
+    # read user preferences
+    config.update_from_addon_preference(bpy.context)
+
 
 def unregister():
+    logging.info('Unloading io_ogre_TL %s', bl_info["version"])
     bpy.utils.unregister_module(__name__)
 
     bpy.types.INFO_MT_file_import.remove(menu_func_import)
     bpy.types.INFO_MT_file_export.remove(menu_func_export)
+
+    # bpy.utils.unregister_class(OgreTlAddonPreferences)
 
 
 if __name__ == "__main__":

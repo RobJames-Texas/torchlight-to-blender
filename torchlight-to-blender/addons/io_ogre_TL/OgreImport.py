@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.16 15-Oct-2019"
+__version__ = "0.8.17 17-Jan-2020"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -36,12 +36,15 @@ Supported:<br>
       layer called Alpha)
     * import/export of shape keys
     * Calculation of tangents and binormals for export
+    * Toggle of edge lists during export
 
 Known issues:<br>
     * imported materials will lose certain informations not applicable to
       Blender when exported
 
 History:<br>
+    * v0.8.17  (17-Jan-2020)- Updated user settings panel to be more
+             configurable. Added toggle for edge lists.
     * v0.8.16  (15-Oct-2019) - Fixed exporting vertex colour + vertex alpha
              From Kenshi add on
     * v0.8.15  (17-Jul-2019) - Added option to import normals
