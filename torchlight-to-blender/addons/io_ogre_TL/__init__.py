@@ -124,7 +124,7 @@ bl_info = {
     "name": "Torchlight 2 MESH format",
     "author": "Rob James",
     "blender": (2, 5, 9),
-    "version": (0, 8, 16),
+    "version": (0, 8, 17),
     "api": 35622,
     "location": "File > Import-Export",
     "description": ("Import-Export Torchlight 2 Model, Import MESH, UV's, "
