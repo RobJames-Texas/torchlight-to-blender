@@ -221,7 +221,7 @@ class Skeleton(object):
         self.bones = [None] * len(data.bones)
         for bone in data.bones:
             if bone.name in self.ids:
-                    self.bones[self.ids[bone.name]] = bone
+                self.bones[self.ids[bone.name]] = bone
             else:
                 missing.append(bone)
         for bone in missing:
