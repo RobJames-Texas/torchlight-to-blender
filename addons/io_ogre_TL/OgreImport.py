@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.17 17-Jan-2020"
+__version__ = "0.8.18 02-Feb-2020"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -43,6 +43,8 @@ Known issues:<br>
       Blender when exported
 
 History:<br>
+    * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded to 0
+             and removed.
     * v0.8.17  (17-Jan-2020)- Updated user settings panel to be more
              configurable. Added toggle for edge lists.
     * v0.8.16  (15-Oct-2019) - Fixed exporting vertex colour + vertex alpha
@@ -150,6 +152,7 @@ import subprocess
 SHOW_IMPORT_DUMPS = False
 SHOW_IMPORT_TRACE = False
 DEFAULT_KEEP_XML = False
+MIN_BONE_LENGTH = 0.00001 # Prevent automatic removal of bones
 # default blender version of script
 blender_version = 259
 
@@ -992,7 +995,7 @@ def bCreateSkeleton(meshData, name):
         if len(children) > 0:
             for child in children:
                 tailVector = max(tailVector, bonesData[child]['position'][0])
-        if tailVector == 0:
+        if tailVector < MIN_BONE_LENGTH:
             tailVector = averageBone
 
         # boneObj.head = Vector([headPos[0],-headPos[2],headPos[1]])
@@ -1010,7 +1013,7 @@ def bCreateSkeleton(meshData, name):
             r2 = [rotmat[2].x] + [rotmat[2].y] + [rotmat[2].z]
             boneRotMatrix = Matrix((r1, r0, r2))
         elif blender_version > 262:
-            # this is fugly was of flipping matrix
+            # this is fugly way of flipping matrix
             r0 = [rotmat.col[0].x] + [rotmat.col[0].y] + [rotmat.col[0].z]
             r1 = [rotmat.col[1].x] + [rotmat.col[1].y] + [rotmat.col[1].z]
             r2 = [rotmat.col[2].x] + [rotmat.col[2].y] + [rotmat.col[2].z]
