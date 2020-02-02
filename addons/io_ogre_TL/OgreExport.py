@@ -20,7 +20,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 """
 
 __author__ = "Rob James"
-__version__ = "0.8.17 17-Jan-2020"
+__version__ = "0.8.18 02-Feb-2020"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -43,6 +43,8 @@ Known issues:<br>
       Blender when exported
 
 History:<br>
+    * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded to 0
+             and removed.
     * v0.8.17  (17-Jan-2020)- Updated user settings panel to be more
              configurable. Added toggle for edge lists.
     * v0.8.16  (15-Oct-2019) - Fixed exporting vertex colour + vertex alpha
