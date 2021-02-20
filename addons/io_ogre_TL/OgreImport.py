@@ -19,6 +19,12 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 
 """
 
+import subprocess
+import os
+import math
+from mathutils import Vector, Matrix
+import bpy
+from xml.dom import minidom
 __author__ = "Rob James"
 __version__ = "0.8.18 02-Feb-2020"
 
@@ -43,8 +49,8 @@ Known issues:<br>
       Blender when exported
 
 History:<br>
-    * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded to 0
-             and removed.
+    * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded
+             to 0 and removed.
     * v0.8.17  (17-Jan-2020)- Updated user settings panel to be more
              configurable. Added toggle for edge lists.
     * v0.8.16  (15-Oct-2019) - Fixed exporting vertex colour + vertex alpha
@@ -142,17 +148,11 @@ Note: Bones store their OGREID as a custom variable so they are consistent
 """
 
 # from Blender import *
-from xml.dom import minidom
-import bpy
-from mathutils import Vector, Matrix
-import math
-import os
-import subprocess
 
 SHOW_IMPORT_DUMPS = False
 SHOW_IMPORT_TRACE = False
 DEFAULT_KEEP_XML = False
-MIN_BONE_LENGTH = 0.00001 # Prevent automatic removal of bones
+MIN_BONE_LENGTH = 0.00001  # Prevent automatic removal of bones
 # default blender version of script
 blender_version = 259
 
@@ -192,7 +192,7 @@ def xOpenFile(filename):
     try:
         xml_doc = minidom.parse(xml_file)
         output = xml_doc
-    except:
+    except Exception:
         print("File not valid!")
         output = 'None'
     xml_file.close()
@@ -283,11 +283,13 @@ def xCollectMeshData(meshData, xmldoc, meshname, dirname, useNormals):
     if(len(xmldoc.getElementsByTagName('sharedgeometry')) > 0):
         isSharedGeometry = True
         for subnodes in xmldoc.getElementsByTagName('sharedgeometry'):
-            meshData['sharedgeometry'] = xCollectVertexData(subnodes, useNormals)
+            meshData['sharedgeometry'] = xCollectVertexData(
+                subnodes, useNormals)
 
         if hasSkeleton:
             for subnodes in xmldoc.getElementsByTagName('boneassignments'):
-                meshData['sharedgeometry']['boneassignments'] = xCollectBoneAssignments(meshData, subnodes)
+                meshData['sharedgeometry']['boneassignments'] = \
+                    xCollectBoneAssignments(meshData, subnodes)
 
     # collect submeshes data
     for submeshes in xmldoc.getElementsByTagName('submeshes'):
@@ -301,7 +303,8 @@ def xCollectMeshData(meshData, xmldoc, meshname, dirname, useNormals):
                 sm['materialOrg'] = materialOrg
                 for subnodes in submesh.childNodes:
                     if subnodes.localName == 'faces':
-                        facescount = int(subnodes.getAttributeNode('count').value)
+                        facescount = int(
+                            subnodes.getAttributeNode('count').value)
                         sm['faces'] = xCollectFaceData(subnodes)
 
                         if len(xCollectFaceData(subnodes)) != facescount:
@@ -309,11 +312,15 @@ def xCollectMeshData(meshData, xmldoc, meshname, dirname, useNormals):
                             break
 
                     if (subnodes.localName == 'geometry'):
-                        vertexcount = int(subnodes.getAttributeNode('vertexcount').value)
-                        sm['geometry'] = xCollectVertexData(subnodes, useNormals)
+                        vertexcount = int(
+                            subnodes.getAttributeNode('vertexcount').value)
+                        sm['geometry'] = xCollectVertexData(
+                            subnodes, useNormals)
 
-                    if hasSkeleton and subnodes.localName == 'boneassignments' and isSharedGeometry is False:
-                        sm['geometry']['boneassignments'] = xCollectBoneAssignments(meshData, subnodes)
+                    if hasSkeleton and (subnodes.localName == 'boneassignments'
+                                        and isSharedGeometry is False):
+                        sm['geometry']['boneassignments'] = \
+                            xCollectBoneAssignments(meshData, subnodes)
 
                 subMeshData.append(sm)
 
@@ -328,7 +335,7 @@ def xCollectMaterialData(meshData, materialFiles, folder):
         materialFile = materialFiles[0]
         try:
             filein = open(materialFile)
-        except:
+        except Exception:
             print("WARNING: Material: File", materialFile, "not found!")
             return 'None'
         data = filein.readlines()
@@ -344,7 +351,7 @@ def xCollectMaterialData(meshData, materialFiles, folder):
             for matFile in materialFiles:
                 try:
                     filein = open(matFile)
-                except:
+                except Exception:
                     print("WARNING: Material: File", matFile, "not found!")
                     return 'None'
                 data = filein.readlines()
@@ -357,7 +364,8 @@ def xCollectMaterialData(meshData, materialFiles, folder):
                         break
 
                 if materialFound:
-                    print("Material '%s' found in '%s'" % (firstMaterial, matFile))
+                    print("Material '%s' found in '%s'" %
+                          (firstMaterial, matFile))
                     break
             # material is not found at all
             if not materialFound:
@@ -391,23 +399,26 @@ def xCollectMaterialData(meshData, materialFiles, folder):
             if SHOW_IMPORT_TRACE:
                 print("Materialname: ", Material)
             for line in MaterialDic[Material]:
-                # if "texture_unit" in line:
-                #     allMaterials[Material] = ""
-                #     count = 0
                 if "{" in line:
                     count += 1
                 # texture
-                if (count > 0) and ("texture " in line) and ('texture' not in matDict):
+                if ((count > 0)
+                        and ("texture " in line)
+                        and ('texture' not in matDict)):
                     imageName = (line.split()[1])
                     file = os.path.join(folder, imageName)
                     if(not os.path.isfile(file)):
-                        # just force to use .dds if there isn't file specified in material file
-                        file = os.path.join(folder, os.path.splitext((line.split()[1]))[0] + ".dds")
+                        # just force to use .dds if there isn't file specified
+                        # in material file
+                        file = os.path.join(folder, os.path.splitext(
+                            (line.split()[1]))[0] + ".dds")
                         if(os.path.isfile(file)):
                             matDict['texture'] = file
                             matDict['imageNameOnly'] = imageName
                         else:
-                            print("WARNING: Referenced texture '%s' not found" % file)
+                            print(
+                                "WARNING: Referenced texture '%s' not found"
+                                % file)
                     else:
                         matDict['texture'] = file
                         matDict['imageNameOnly'] = imageName
@@ -548,7 +559,7 @@ def xCollectBoneData(meshData, xDoc):
                         x = float(b.getAttributeNode('x').value)
                         y = float(b.getAttributeNode('y').value)
                         z = float(b.getAttributeNode('z').value)
-                        OGRE_Bone['position'] = [x,y,z]
+                        OGRE_Bone['position'] = [x, y, z]
                     if b.localName == 'rotation':
                         angle = float(b.getAttributeNode('angle').value)
                         axis = b.childNodes[1]
@@ -597,7 +608,8 @@ def calcHelperBones(BonesData):
     count = 0
     helperBones = {}
     for bone in BonesData.keys():
-        if (len(BonesData[bone]['children']) == 0) or (len(BonesData[bone]['children']) > 1):
+        if ((len(BonesData[bone]['children']) == 0) or
+                (len(BonesData[bone]['children']) > 1)):
             HelperBone = {}
             HelperBone['position'] = [0.2, 0.0, 0.0]
             HelperBone['parent'] = bone
@@ -626,7 +638,8 @@ def calcZeroBones(BonesData):
             ZeroBone['children'] = []
             zeroBones['Zero'+bone] = ZeroBone
             if 'parent' in BonesData[bone]:
-                BonesData[BonesData[bone]['parent']]['children'].append('Zero'+bone)
+                BonesData[BonesData[bone]['parent']
+                          ]['children'].append('Zero'+bone)
     for hBone in zeroBones.keys():
         BonesData[hBone] = zeroBones[hBone]
 
@@ -637,21 +650,16 @@ def calcBoneHeadPositions(BonesData):
         start = 0
         thisbone = key
         posh = BonesData[key]['position']
-        # print ("SetBonesASPositions: bone=%s, org. position=%s" % (key, posh))
         while start == 0:
             if 'parent' in BonesData[thisbone]:
                 parentbone = BonesData[thisbone]['parent']
                 prot = BonesData[parentbone]['rotation']
                 ppos = BonesData[parentbone]['position']
 
-                # protmat = RotationMatrix(math.degrees(prot[3]),3,'r',Vector(prot[0],prot[1],prot[2])).invert()
-                protmat = Matrix.Rotation(prot[3], 3, Vector([prot[0], prot[1], prot[2]])).inverted()
-                # print ("SetBonesASPositions: bone=%s, protmat=%s" % (key, protmat))
-                # print(protmat)
-                # newposh = protmat * Vector([posh[0],posh[1],posh[2]])
-                # newposh =  protmat * Vector([posh[2],posh[1],posh[0]]) #02
-                newposh = protmat.transposed() * Vector([posh[0], posh[1], posh[2]])  # 03
-                # print ("SetBonesASPositions: bone=%s, newposh=%s" % (key, newposh))
+                protmat = Matrix.Rotation(prot[3], 3, Vector(
+                    [prot[0], prot[1], prot[2]])).inverted()
+                newposh = protmat.transposed(
+                ) * Vector([posh[0], posh[1], posh[2]])  # 03
                 positionh = VectorSum(ppos, newposh)
 
                 posh = positionh
@@ -661,15 +669,12 @@ def calcBoneHeadPositions(BonesData):
                 start = 1
 
         BonesData[key]['posHAS'] = posh
-        # print ("SetBonesASPositions: bone=%s, posHAS=%s" % (key, posh))
 
 
 def calcBoneRotations(BonesDic):
     objDic = {}
     scn = bpy.context.scene
-    # scn = Scene.GetCurrent()
     for bone in BonesDic.keys():
-        # obj = Object.New('Empty',bone)
         obj = bpy.data.objects.new(bone, None)
         objDic[bone] = obj
         scn.objects.link(obj)
@@ -677,25 +682,17 @@ def calcBoneRotations(BonesDic):
     # print(bpy.data.objects)
     for bone in BonesDic.keys():
         if 'parent' in BonesDic[bone]:
-            # Parent = Object.Get(BonesDic[bone]['parent'])
-            # print(BonesDic[bone]['parent'])
             Parent = objDic.get(BonesDic[bone]['parent'])
             object = objDic.get(bone)
             object.parent = Parent
-            # Parent.makeParent([object])
     # print("all parents linked")
     for bone in BonesDic.keys():
         obj = objDic.get(bone)
         rot = BonesDic[bone]['rotation']
         loc = BonesDic[bone]['position']
-        # print ("CreateEmptys:bone=%s, rot=%s" % (bone, rot))
-        # print ("CreateEmptys:bone=%s, loc=%s" % (bone, loc))
-        euler = Matrix.Rotation(rot[3], 3, Vector([rot[0], -rot[2], rot[1]])).to_euler()
+        euler = Matrix.Rotation(rot[3], 3, Vector(
+            [rot[0], -rot[2], rot[1]])).to_euler()
         obj.location = [loc[0], -loc[2], loc[1]]
-        # print ("CreateEmptys:bone=%s, euler=%s" % (bone, euler))
-        # print ("CreateEmptys:bone=%s, obj.rotation_euler=%s" % (bone,[math.radians(euler[0]),math.radians(euler[1]),math.radians(euler[2])]))
-        # obj.rotation_euler = [math.radians(euler[0]),math.radians(euler[1]),math.radians(euler[2])]
-        # print ("CreateEmptys:bone=%s, obj.rotation_euler=%s" % (bone,[euler[0],euler[1],euler[2]])) # 02
         obj.rotation_euler = [euler[0], euler[1], euler[2]]  # 02
     # Redraw()
     scn.update()
@@ -707,44 +704,16 @@ def calcBoneRotations(BonesDic):
         loc, rot, scale = obj.matrix_world.decompose()  # 02
         rotmatAS = rot.to_matrix()
         # print(rotmatAS)
-#        obj.rotation_quaternion.
-#        rotmatAS = Matrix(.matrix_local..getMatrix().rotationPart()
         BonesDic[bone]['rotmatAS'] = rotmatAS
-        # print ("CreateEmptys:bone=%s, rotmatAS=%s" % (bone, rotmatAS))
     # print("all matrices stored")
-
-#    for bone in BonesDic.keys():
-#        obj = objDic.get(bone)
-#        scn.objects.unlink(obj)
-#        del obj
 
     # TODO cyclic
     for bone in BonesDic.keys():
         obj = objDic.get(bone)
-#        obj.select = True
-#        #bpy.ops.object.select_name(bone, False)
-#        bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
         scn.objects.unlink(obj)  # TODO: cyclic message in console
-        # del obj
-        # bpy.context.scene.objects.unlink(obj)
         bpy.data.objects.remove(obj)
 
     scn.update()
-#    removedObj = {}
-#    children=1
-#    while children>0:
-#        children=0
-#        for bone in BonesDic.keys():
-#            if('children' in BonesDic[bone].keys() and bone not in removedObj):
-#                if len(BonesDic[bone]['children'])==0:
-#                    obj = objDic.get(bone)
-#                    scn.objects.unlink(obj)
-#                    del obj
-#                    removedObj[bone]=True
-#                else:
-#                    children+=1
-
-    # print("all objects removed")
 
 
 def VectorSum(vec1, vec2):
@@ -782,7 +751,8 @@ def xAnalyseFPS(xDoc):
                 tracks = xGetChild(animation, 'tracks')
                 for track in tracks.childNodes:
                     if track.nodeType == 1:
-                        for keyframe in xGetChild(track, 'keyframes').childNodes:
+                        for keyframe in xGetChild(track,
+                                                  'keyframes').childNodes:
                             if keyframe.nodeType == 1:
                                 time = float(keyframe.getAttribute('time'))
                                 if time > lastTime:
@@ -839,7 +809,8 @@ def xReadAnimation(action, tracks, integerFrames=True):
                     z = axis.getAttribute('z')
                     # skip if axis contains #INF or #IND
                     if '#' not in x and '#' not in y and '#' not in z:
-                        quat = quaternionFromAngleAxis(float(angle), float(z), float(x), float(y))
+                        quat = quaternionFromAngleAxis(
+                            float(angle), float(z), float(x), float(y))
                         trackData[1].append([frame, quat])
                 elif key.tagName == 'scale':
                     x = float(key.getAttribute('x'))
@@ -862,14 +833,14 @@ def bCreateAnimations(meshData):
         fix2 = Matrix([(0, 1, 0), (0, 0, 1), (1, 0, 0)])
         for bone in rig.pose.bones:
             if bone.parent:
-                mat[bone.name] = fix2 * bone.parent.matrix.to_3x3().transposed() * bone.matrix.to_3x3()
+                mat[bone.name] = (fix2 *
+                                  bone.parent.matrix.to_3x3().transposed() *
+                                  bone.matrix.to_3x3())
             else:
                 mat[bone.name] = fix1 * bone.matrix.to_3x3()
 
         for name in sorted(meshData['animations'].keys(), reverse=True):
             action = bpy.data.actions.new(name)
-            # action.use_fake_user = True
-            # Dont need the above as we are adding them to the nla editor
             print("Created action", name)
 
             # iterate target bones
@@ -998,15 +969,7 @@ def bCreateSkeleton(meshData, name):
         if tailVector < MIN_BONE_LENGTH:
             tailVector = averageBone
 
-        # boneObj.head = Vector([headPos[0],-headPos[2],headPos[1]])
-        # boneObj.tail = Vector([headPos[0],-headPos[2],headPos[1] + tailVector])
-
-        # print("bCreateSkeleton: bone=%s, boneObj.head=%s" % (bone, boneObj.head))
-        # print("bCreateSkeleton: bone=%s, boneObj.tail=%s" % (bone, boneObj.tail))
-        # boneObj.matrix =
         rotmat = boneData['rotmatAS']
-        # print(rotmat[1].to_tuple())
-        # boneObj.matrix = Matrix(rotmat[1],rotmat[0],rotmat[2])
         if blender_version <= 262:
             r0 = [rotmat[0].x] + [rotmat[0].y] + [rotmat[0].z]
             r1 = [rotmat[1].x] + [rotmat[1].y] + [rotmat[1].z]
@@ -1020,36 +983,11 @@ def bCreateSkeleton(meshData, name):
             tmpR = Matrix((r1, r0, r2))
             boneRotMatrix = Matrix((tmpR.col[0], tmpR.col[1], tmpR.col[2]))
 
-        # pos = Vector([headPos[0],-headPos[2],headPos[1]])
-        # axis, roll = mat3_to_vec_roll(boneRotMatrix.to_3x3())
-
-        # boneObj.head = pos
-        # boneObj.tail = pos + axis
-        # boneObj.roll = roll
-
-        # print("bCreateSkeleton: bone=%s, newrotmat=%s" % (bone, Matrix((r1,r0,r2))))
-        # print(r1)
-        # mtx = Matrix.to_3x3()Translation(boneObj.head) # Matrix((r1,r0,r2))
-        # boneObj.transform(Matrix((r1,r0,r2)))
-        # print("bCreateSkeleton: bone=%s, matrix_before=%s" % (bone, boneObj.matrix))
-        # boneObj.use_local_location = False
-        # boneObj.transform(Matrix((r1,r0,r2)) , False, False)
-        # print("bCreateSkeleton: bone=%s, matrix_after=%s" % (bone, boneObj.matrix))
         boneObj.head = Vector([0, 0, 0])
-        # boneObj.tail = Vector([0,0,tailVector])
         boneObj.tail = Vector([0, tailVector, 0])
-        # matx = Matrix.Translation(Vector([headPos[0],-headPos[2],headPos[1]]))
 
         boneObj.transform(boneRotMatrix)
-        # scn.update()
         boneObj.translate(Vector([headPos[0], -headPos[2], headPos[1]]))
-        # scn.update()
-        # boneObj.translate(Vector([headPos[0],-headPos[2],headPos[1]]))
-        # boneObj.head = Vector([headPos[0],-headPos[2],headPos[1]])
-        # boneObj.tail = Vector([headPos[0],-headPos[2],headPos[1]]) + (Vector([0,0, tailVector])  * Matrix((r1,r0,r2)))
-
-        # amt.bones[bone] = boneObj
-        # amt.update_tag(refresh)
 
     # only after all bones are created we can link parents
     for bone in bonesData.keys():
@@ -1152,7 +1090,8 @@ def bCreateSubMeshes(meshData, meshName):
             c = 0
             for v in me.vertices:
                 if hasNormals:
-                    v.normal = Vector((normals[c][0], normals[c][1], normals[c][2]))
+                    v.normal = Vector(
+                        (normals[c][0], normals[c][1], normals[c][2]))
                     c += 1
         elif(blender_version > 262):
             # vertices and faces of mesh
@@ -1163,7 +1102,8 @@ def bCreateSubMeshes(meshData, meshName):
             for i in range(VertLength):
                 me.vertices[i].co = verts[i]
                 if hasNormals:
-                    me.vertices[i].normal = Vector((normals[i][0], normals[i][1], normals[i][2]))
+                    me.vertices[i].normal = Vector(
+                        (normals[i][0], normals[i][1], normals[i][2]))
             # me.vertices[VertLength].co = verts[0]
             for i in range(FaceLength):
                 NewFace = (faces[i][0], faces[i][1], faces[i][2], 0)
@@ -1260,9 +1200,12 @@ def bCreateSubMeshes(meshData, meshName):
                 colv1 = vcolors[f.vertices[0]]
                 colv2 = vcolors[f.vertices[1]]
                 colv3 = vcolors[f.vertices[2]]
-                colorLayer.data[f.index].color1 = (colv1[0], colv1[1], colv1[2])
-                colorLayer.data[f.index].color2 = (colv2[0], colv2[1], colv2[2])
-                colorLayer.data[f.index].color3 = (colv3[0], colv3[1], colv3[2])
+                colorLayer.data[f.index].color1 = (
+                    colv1[0], colv1[1], colv1[2])
+                colorLayer.data[f.index].color2 = (
+                    colv2[0], colv2[1], colv2[2])
+                colorLayer.data[f.index].color3 = (
+                    colv3[0], colv3[1], colv3[2])
 
             # Vertex Alpha
             for c in vcolors:
@@ -1313,7 +1256,8 @@ def bCreateSubMeshes(meshData, meshName):
                     shape = ob.shape_key_add(name)
                     for vkey in pose['data']:
                         b = base.data[vkey[0]].co
-                        me.shape_keys.key_blocks[name].data[vkey[0]].co = [vkey[1] + b[0], vkey[2] + b[1], vkey[3] + b[2]]
+                        me.shape_keys.key_blocks[name].data[vkey[0]].co = [
+                            vkey[1] + b[0], vkey[2] + b[1], vkey[3] + b[2]]
 
         # Update mesh with new data
         me.update(calc_edges=True)
@@ -1341,7 +1285,6 @@ def bCreateSubMeshes(meshData, meshName):
             if len(split) == len(me.loops):
                 me.normals_split_custom_set(split)
             else:
-                # operator.report( {'WARNING'}, "Failed to import mesh normals")
                 print('Warning: Failed to import mesh normals', polyIndex,
                       '/', len(me.polygons))
 
@@ -1387,7 +1330,7 @@ def convertXML(convertor, filename, use_existing=True):
         try:
             subprocess.call([convertor, '-q', filename])
             return os.path.isfile(filename + '.xml')
-        except:
+        except Exception:
             print("Error: Could not run", convertor)
             return False
 
@@ -1457,7 +1400,10 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
         skeletonFile = xGetSkeletonLink(xDocMeshData, folder, operator)
 
         # use selected skeleton
-        selectedSkeleton = context.active_object if use_selected_skeleton and context.active_object and context.active_object.type == 'ARMATURE' else None
+        selectedSkeleton = context.active_object \
+            if (use_selected_skeleton
+                and context.active_object
+                and context.active_object.type == 'ARMATURE') else None
         if selectedSkeleton:
             map = getBoneNameMapFromArmature(selectedSkeleton)
             if map:

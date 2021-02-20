@@ -43,8 +43,8 @@ Known issues:<br>
       Blender when exported
 
 History:<br>
-    * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded to 0
-             and removed.
+    * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded
+             to 0 and removed.
     * v0.8.17  (17-Jan-2020)- Updated user settings panel to be more
              configurable. Added toggle for edge lists.
     * v0.8.16  (15-Oct-2019) - Fixed exporting vertex colour + vertex alpha
@@ -155,6 +155,7 @@ class VertexInfo(object):
 
     '''does not compare ogre_vidx (and position at the moment)
       [ no need to compare position ]'''
+
     def __eq__(self, o):
         if self.nx != o.nx or self.ny != o.ny or self.nz != o.nz:
             return False
@@ -239,7 +240,7 @@ class Skeleton(object):
             if bone.parent:
                 self.rest[i] = (bone.parent.matrix_local *
                                 fix * rot).inverted()\
-                                     * bone.matrix_local * fix * rot
+                    * bone.matrix_local * fix * rot
             else:
                 self.rest[i] = rot * bone.matrix_local * fix * rot
 
@@ -360,8 +361,8 @@ def collectAnimationData(armature, frame_range, fps, step=1):
     for b in armature.data.edit_bones:
         if b.parent:
             mat[b.name] = fix2 * \
-             b.parent.matrix.to_3x3().transposed() * \
-             b.matrix.to_3x3()
+                b.parent.matrix.to_3x3().transposed() * \
+                b.matrix.to_3x3()
         else:
             mat[b.name] = fix1 * b.matrix.to_3x3()
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
@@ -381,7 +382,8 @@ def collectAnimationData(armature, frame_range, fps, step=1):
             loc = mat[bone.name] * loc
 
             keyframes[bone.name][0].append((time, (loc[0], loc[1], loc[2])))
-            keyframes[bone.name][1].append((time, (rot[0], rot[1], rot[2], rot[3])))
+            keyframes[bone.name][1].append(
+                (time, (rot[0], rot[1], rot[2], rot[3])))
             keyframes[bone.name][2].append((time, (scl[0], scl[1], scl[2])))
 
     # Remove unnessesary tracks
@@ -450,8 +452,10 @@ def xSaveAnimation(animation, xDoc, xAnimations):
             if data[1]:
                 rot = data[1][frame][1]
                 angle = math.acos(rot[0]) * 2
-                l = math.sqrt(rot[1]*rot[1] + rot[2]*rot[2] + rot[3]*rot[3])
-                axis = (1, 0, 0) if l == 0 else (rot[1]/l, rot[2]/l, rot[3]/l)
+                length = math.sqrt(rot[1]*rot[1] + rot[2]*rot[2]
+                                   + rot[3]*rot[3])
+                axis = (1, 0, 0) if length == 0 \
+                    else (rot[1]/length, rot[2]/length, rot[3]/length)
 
                 rotate = xDoc.createElement('rotate')
                 raxis = xDoc.createElement('axis')
@@ -479,7 +483,7 @@ def fileExist(filepath):
         filein = open(filepath)
         filein.close()
         return True
-    except:
+    except Exception:
         print("No file: ", filepath)
         return False
 
@@ -541,7 +545,8 @@ def xSaveGeometry(geometry, xDoc, xMesh):
         xVertexBuffer.setAttribute("normals", "true")
     if isTexCoordsSets:
         xVertexBuffer.setAttribute("texture_coord_dimensions_0", "2")
-        xVertexBuffer.setAttribute("texture_coords", "1") #str(texCoordSets)) # Only export one set
+        # str(texCoordSets)) # Only export one set
+        xVertexBuffer.setAttribute("texture_coords", "1")
 
     if isColours:
         xVertexBuffer.setAttribute("colours_diffuse", "true")
@@ -632,17 +637,19 @@ def xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry=False):
         # boneassignments
         if 'skeleton' in meshData:
             skeleton = meshData['skeleton']
-            # xBoneAssignments = xGetBoneAssignments(meshData, xDoc,
-            #  submesh['geometry']['boneassignments'])
             xBoneAssignments = xDoc.createElement("boneassignments")
-            for vxIdx, vxBoneAsg in enumerate(submesh['geometry']['boneassignments']):
+            for vxIdx, vxBoneAsg in enumerate(
+                    submesh['geometry']['boneassignments']):
                 for boneAndWeight in vxBoneAsg:
                     boneName = boneAndWeight[0]
                     boneWeight = boneAndWeight[1]
-                    xVxBoneassignment = xDoc.createElement("vertexboneassignment")
+                    xVxBoneassignment = xDoc.createElement(
+                        "vertexboneassignment")
                     xVxBoneassignment.setAttribute("vertexindex", str(vxIdx))
-                    xVxBoneassignment.setAttribute("boneindex", str(skeleton.bone_id(boneName)))
-                    xVxBoneassignment.setAttribute("weight", '%6f' % boneWeight)
+                    xVxBoneassignment.setAttribute(
+                        "boneindex", str(skeleton.bone_id(boneName)))
+                    xVxBoneassignment.setAttribute(
+                        "weight", '%6f' % boneWeight)
                     xBoneAssignments.appendChild(xVxBoneassignment)
             xSubMesh.appendChild(xBoneAssignments)
 
@@ -724,7 +731,6 @@ def xSaveMeshData(meshData, filepath, export_skeleton):
             nameDotMeshDotXml = os.path.split(filepath)[1].lower()
             nameDotMesh = os.path.splitext(nameDotMeshDotXml)[0]
             linkSkeletonName = os.path.splitext(nameDotMesh)[0]
-        # xSkeletonlink.setAttribute("name", meshData['skeleton']['name']+".skeleton")
         xSkeletonlink.setAttribute("name", linkSkeletonName+".skeleton")
         xMesh.appendChild(xSkeletonlink)
 
@@ -750,7 +756,8 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
     print("material file: %s" % matFile)
     isMaterial = os.path.isfile(matFile)
 
-    # if is no material file, or we are forced to overwrite it, write the material file
+    # if is no material file, or we are forced to overwrite it,
+    # write the material file
     if isMaterial is False or overwriteMaterialFlag is True:
         # write material
         fileWr = open(matFile, 'w')
@@ -761,15 +768,25 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
             fileWr.write(indent(2) + "pass\n" + indent(2) + "{\n")
 
             # write material content here
-            fileWr.write(indent(3) + "ambient %f %f %f\n" % (matInfo['ambient'][0], matInfo['ambient'][1], matInfo['ambient'][2]))
-            fileWr.write(indent(3) + "diffuse %f %f %f\n" % (matInfo['diffuse'][0], matInfo['diffuse'][1], matInfo['diffuse'][2]))
-            fileWr.write(indent(3) + "specular %f %f %f 0\n" % (matInfo['specular'][0], matInfo['specular'][1], matInfo['specular'][2]))
-            fileWr.write(indent(3) + "emissive %f %f %f\n" % (matInfo['emissive'][0], matInfo['emissive'][1], matInfo['emissive'][2]))
+            fileWr.write(indent(3) + "ambient %f %f %f\n" %
+                         (matInfo['ambient'][0], matInfo['ambient'][1],
+                             matInfo['ambient'][2]))
+            fileWr.write(indent(3) + "diffuse %f %f %f\n" %
+                         (matInfo['diffuse'][0], matInfo['diffuse'][1],
+                             matInfo['diffuse'][2]))
+            fileWr.write(indent(3) + "specular %f %f %f 0\n" %
+                         (matInfo['specular'][0], matInfo['specular'][1],
+                             matInfo['specular'][2]))
+            fileWr.write(indent(3) + "emissive %f %f %f\n" %
+                         (matInfo['emissive'][0], matInfo['emissive'][1],
+                             matInfo['emissive'][2]))
 
             if 'textures' in matInfo:
                 for texInfo in matInfo['textures']:
-                    fileWr.write(indent(3) + "texture_unit\n" + indent(3) + "{\n")
-                    fileWr.write(indent(4) + "texture %s\n" % texInfo['texture'])
+                    fileWr.write(indent(3) + "texture_unit\n" +
+                                 indent(3) + "{\n")
+                    fileWr.write(indent(4) + "texture %s\n" %
+                                 texInfo['texture'])
                     fileWr.write(indent(3) + "}\n")  # texture unit
 
             fileWr.write(indent(2) + "}\n")  # pass
@@ -787,18 +804,23 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
                         srcTextureFile = texInfo['texture_path']
                         baseDirName = os.path.dirname(bpy.data.filepath)
                         if srcTextureFile[0:2] == "//":
-                            print("Converting relative image name \"%s\"" % srcTextureFile)
-                            srcTextureFile = os.path.join(baseDirName, srcTextureFile[2:])
+                            print("Converting relative image name \"%s\"" %
+                                  srcTextureFile)
+                            srcTextureFile = os.path.join(
+                                baseDirName, srcTextureFile[2:])
                         if fileExist(srcTextureFile):
                             # copy texture to dir
                             print("Copying texture \"%s\"" % srcTextureFile)
                             try:
                                 print(" to \"%s\"" % os.path.dirname(matFile))
-                                shutil.copy(srcTextureFile, os.path.dirname(matFile))
-                            except:
+                                shutil.copy(srcTextureFile,
+                                            os.path.dirname(matFile))
+                            except Exception:
                                 print("Error copying \"%s\"" % srcTextureFile)
                         else:
-                            print("Can't copy texture \"%s\" because file does not exists!" % srcTextureFile)
+                            print(
+                                "Can't copy texture \"%s\" because file does "
+                                "not exists!" % srcTextureFile)
 
 
 def getVertexIndex(vertexInfo, vertexList):
@@ -890,7 +912,8 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
             tris.append((face.vertices[0], face.vertices[1], face.vertices[2]))
 
             if len(face.vertices) >= 4:
-                tris.append((face.vertices[0], face.vertices[2], face.vertices[3]))
+                tris.append(
+                    (face.vertices[0], face.vertices[2], face.vertices[3]))
 
             # Progress
             percent = fidx * progressScale
@@ -915,8 +938,11 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
                 r, g, b = colourData[loop].color if colourData else (1, 1, 1)
                 a = alphaData[loop].color[0] if alphaData else 1
 
-                tangent = mesh.loops[loop].tangent[:] + (mesh.loops[loop].bitangent_sign,) if exportTangents else None
-                binormal = mesh.loops[loop].bitangent * -1 if exportBinormals else None
+                tangent = mesh.loops[loop].tangent[:] + \
+                    (mesh.loops[loop].bitangent_sign,
+                     ) if exportTangents else None
+                binormal = mesh.loops[loop].bitangent * - \
+                    1 if exportBinormals else None
 
                 # vertex groups
                 boneWeights = {}
@@ -1116,8 +1142,11 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
                 r, g, b = colourData[loop].color if colourData else (1, 1, 1)
                 a = alphaData[loop].color[0] if alphaData else 1
 
-                tangent = mesh.loops[loop].tangent[:] + (mesh.loops[loop].bitangent_sign,) if exportTangents else None
-                binormal = mesh.loops[loop].bitangent * -1 if exportBinormals else None
+                tangent = mesh.loops[loop].tangent[:] + \
+                    (mesh.loops[loop].bitangent_sign,
+                     ) if exportTangents else None
+                binormal = mesh.loops[loop].bitangent * - \
+                    1 if exportBinormals else None
 
                 # vertex groups
                 boneWeights = {}
@@ -1283,10 +1312,12 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                     if len(mat.texture_slots) > 0:
                         matInfo['textures'] = []
                         for slot in mat.texture_slots:
-                            if slot and slot.texture.type == 'IMAGE' and slot.texture.image:
+                            if slot and slot.texture.type == 'IMAGE' and \
+                                    slot.texture.image:
                                 texInfo = {}
                                 texInfo['texture'] = slot.texture.image.name
-                                texInfo['texture_path'] = slot.texture.image.filepath
+                                texInfo['texture_path'] = \
+                                    slot.texture.image.filepath
                                 matInfo['textures'].append(texInfo)
 
 
@@ -1319,7 +1350,7 @@ def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
 
         return True
 
-    except:
+    except Exception:
         print("Error: Could not run", ogreXMLconverter)
         return False
 
@@ -1363,7 +1394,7 @@ def save(operator, context, filepath,
 
     if len(selectedObjects) == 0:
         print("No objects selected for export.")
-        operator.report( {'WARNING'}, "No objects selected for export")
+        operator.report({'WARNING'}, "No objects selected for export")
         return ('CANCELLED')
 
     # go to the object mode

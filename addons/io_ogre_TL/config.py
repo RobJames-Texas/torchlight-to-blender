@@ -1,4 +1,9 @@
-import bpy, os, sys, logging, pickle, mathutils
+import bpy
+import os
+import sys
+import logging
+import pickle
+import mathutils
 from pprint import pprint
 from bpy.props import *
 
@@ -25,13 +30,15 @@ _CONFIG_DEFAULTS_UNIX = {
 }
 
 # Unix: Replace ~ with absolute home dir path
-if sys.platform.startswith('linux') or sys.platform.startswith('darwin') or sys.platform.startswith('freebsd'):
+if sys.platform.startswith('linux') or sys.platform.startswith('darwin') \
+                                    or sys.platform.startswith('freebsd'):
     for tag in _CONFIG_DEFAULTS_UNIX:
         path = _CONFIG_DEFAULTS_UNIX[tag]
         if path.startswith('~'):
             _CONFIG_DEFAULTS_UNIX[tag] = os.path.expanduser(path)
         elif tag.startswith('OGRETOOLS') and not os.path.isfile(path):
-            _CONFIG_DEFAULTS_UNIX[tag] = os.path.join('/usr/bin', os.path.split(path)[-1])
+            _CONFIG_DEFAULTS_UNIX[tag] = os.path.join(
+                '/usr/bin', os.path.split(path)[-1])
     del tag
     del path
 
@@ -45,7 +52,7 @@ def load_config():
         try:
             with open(CONFIG_FILEPATH, 'rb') as f:
                 config_dict = pickle.load(f)
-        except:
+        except Exception:
             print('[ERROR]: Can not read config from %s' % CONFIG_FILEPATH)
 
     for tag in _CONFIG_DEFAULTS_ALL:
@@ -56,7 +63,9 @@ def load_config():
         if tag not in config_dict:
             if sys.platform.startswith('win'):
                 config_dict[tag] = _CONFIG_DEFAULTS_WINDOWS[tag]
-            elif sys.platform.startswith('linux') or sys.platform.startswith('darwin') or sys.platform.startswith('freebsd'):
+            elif sys.platform.startswith('linux') \
+                or sys.platform.startswith('darwin') \
+                    or sys.platform.startswith('freebsd'):
                 config_dict[tag] = _CONFIG_DEFAULTS_UNIX[tag]
             else:
                 print('ERROR: unknown platform')
@@ -65,7 +74,8 @@ def load_config():
     # Setup temp hidden RNA to expose the file paths
     for tag in _CONFIG_TAGS_:
         default = config_dict[tag]
-        func = lambda self, con: config_dict.update({tag: getattr(self, tag, default)})
+        def func(self, con): return config_dict.update(
+            {tag: getattr(self, tag, default)})
         if type(default) is bool:
             prop = BoolProperty(name=tag,
                                 description='updates bool setting',
@@ -97,7 +107,9 @@ def get(name, default=None):
 def update(**kwargs):
     for k, v in kwargs.items():
         if k not in _CONFIG_DEFAULTS_ALL:
-            print("trying to set CONFIG['%s']=%s, but is not a known config setting" % (k, v))
+            print(
+                "trying to set CONFIG['%s']=%s, but is not a known"
+                " config setting" % (k, v))
         CONFIG[k] = v
     save_config()
 
@@ -109,14 +121,15 @@ def save_config():
         try:
             with open(CONFIG_FILEPATH, 'wb') as f:
                 pickle.dump(CONFIG, f, -1)
-        except:
+        except Exception:
             print('[ERROR]: Can not write to %s' % CONFIG_FILEPATH)
     else:
         print('[ERROR:] Config directory does not exist %s' % CONFIG_PATH)
 
 
 def update_from_addon_preference(context):
-    addon_preferences = context.user_preferences.addons["io_ogre_TL"].preferences
+    addon_preferences = \
+        context.user_preferences.addons["io_ogre_TL"].preferences
 
     for key in _CONFIG_TAGS_:
         addon_pref_value = getattr(addon_preferences, key, None)
