@@ -132,3 +132,4 @@ dmypy.json
 *.exe
 *.dll
 .vscode
+*.zip
