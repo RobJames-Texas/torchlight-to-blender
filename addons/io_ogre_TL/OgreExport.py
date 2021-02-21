@@ -129,6 +129,38 @@ def hash_combine(x, y):
     return x ^ y + 0x9e3779b9 + (x << 6) + (x >> 2)
 
 
+def getIsHidden(obj):
+    if hasattr(obj, "hide_viewport"):
+        return obj.hide_viewport  # 2.8
+    else:
+        return obj.hide
+
+
+def setIsHidden(obj, isHidden):
+    if hasattr(obj, "hide_viewport"):
+        obj.hide_viewport = isHidden
+    else:
+        obj.hide = isHidden
+
+
+def toMesh(obj, applyModifiers):
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):  # 2.8
+        if applyModifiers:
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+            return obj.evaluated_get(depsgraph).to_mesh()
+        else:
+            return obj.to_mesh()
+    else:  # Legacy
+        return obj.to_mesh(bpy.context.scene, applyModifiers, 'PREVIEW')
+
+
+def getUVTextures(mesh):
+    if hasattr(mesh, "uv_textures"):  # legacy
+        return mesh.uv_textures
+    else:
+        return mesh.uv_layers
+
+
 class VertexInfo(object):
     def __init__(self, px, py, pz,
                  nx, ny, nz,
@@ -201,9 +233,9 @@ class Skeleton(object):
         self.armature = ob.find_armature()
         self.name = self.armature.name
         self.ids = {}
-        self.hidden = self.armature.hide
+        self.hidden = getIsHidden(self.armature)
         data = self.armature.data
-        self.armature.hide = False
+        setIsHidden(self.armature, False)
 
         # get ogre bone ids - need to be in edit mode to access edit_bones
         # prev = bpy.context.scene.objects.active
@@ -217,7 +249,7 @@ class Skeleton(object):
 
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         setActiveObject(bpy.context, prev)
-        self.armature.hide = self.hidden
+        setIsHidden(self.armature, self.hidden)
 
         # Allocate bone ids
         index = 0
@@ -362,8 +394,8 @@ def collectAnimationData(armature, frame_range, fps, step=1):
 
     # Get base matrices
     mat = {}
-    hidden = armature.hide
-    armature.hide = False
+    hidden = getIsHidden(armature)
+    setIsHidden(armature, False)
     # prev = bpy.context.scene.objects.active
     prev = bpy.context.object
     setActiveObject(bpy.context, armature)
@@ -378,7 +410,7 @@ def collectAnimationData(armature, frame_range, fps, step=1):
             mat[b.name] = matmul([fix1, b.matrix.to_3x3()])
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
     setActiveObject(bpy.context, prev)
-    armature.hide = hidden
+    setIsHidden(armature, hidden)
 
     # Collect data
     for frame in range(int(start), int(end)+1, step):
@@ -390,7 +422,10 @@ def collectAnimationData(armature, frame_range, fps, step=1):
             scl = bone.scale
 
             # transform transation into parent coordinates
-            loc = mat[bone.name] * loc
+            if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+                loc = mat[bone.name] @ loc
+            else:
+                loc = mat[bone.name] * loc
 
             keyframes[bone.name][0].append((time, (loc[0], loc[1], loc[2])))
             keyframes[bone.name][1].append(
@@ -882,7 +917,7 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
             _sm_verts_.append([])
 
         # mesh = bpy.types.Mesh ##
-        mesh = ob.to_mesh(bpy.context.scene, applyModifiers, 'PREVIEW')
+        mesh = toMesh(ob, applyModifiers)
 
         # use bmesh to triangulate
         bm = bmesh.new()
@@ -1045,7 +1080,7 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
         subMeshData['geometry'] = {}
         subMeshData['geometry']['positions'] = positions
         subMeshData['geometry']['normals'] = normals
-        subMeshData['geometry']['texcoordsets'] = len(mesh.uv_textures)
+        subMeshData['geometry']['texcoordsets'] = len(getUVTextures(mesh))
 
         if uvData:
             subMeshData['geometry']['uvsets'] = uvTex
@@ -1083,7 +1118,7 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
             if m:
                 materialName = m.name
         # mesh = bpy.types.Mesh ##
-        mesh = ob.to_mesh(bpy.context.scene, applyModifiers, 'PREVIEW')
+        mesh = toMesh(ob, applyModifiers)
 
         # use bmesh to triangulate
         bm = bmesh.new()
@@ -1256,9 +1291,9 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
 
         geometry['positions'] = positions
         geometry['normals'] = normals
-        geometry['texcoordsets'] = len(mesh.uv_textures)
+        geometry['texcoordsets'] = len(getUVTextures(mesh))
         if SHOW_EXPORT_TRACE:
-            print("texcoordsets: " + str(len(mesh.uv_textures)))
+            print("texcoordsets: " + str(len(getUVTextures(mesh))))
         if uvData:
             geometry['uvsets'] = uvTex
         if colourData or alphaData:
@@ -1315,19 +1350,23 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                     matInfo = {}
                     allMaterials[mat.name] = matInfo
                     # ambient
-                    matInfo['ambient'] = [mat.ambient,
-                                          mat.ambient,
-                                          mat.ambient]
+                    if hasattr(mat, "ambient"):
+                        matInfo['ambient'] = [mat.ambient,
+                                              mat.ambient,
+                                              mat.ambient]
                     # diffuse
-                    matInfo['diffuse'] = [mat.diffuse_color[0],
-                                          mat.diffuse_color[1],
-                                          mat.diffuse_color[2]]
+                    if hasattr(mat, "diffuse_color"):
+                        matInfo['diffuse'] = [mat.diffuse_color[0],
+                                              mat.diffuse_color[1],
+                                              mat.diffuse_color[2]]
                     # specular
-                    matInfo['specular'] = [mat.specular_color[0],
-                                           mat.specular_color[1],
-                                           mat.specular_color[2]]
+                    if hasattr(mat, "specular_color"):
+                        matInfo['specular'] = [mat.specular_color[0],
+                                               mat.specular_color[1],
+                                               mat.specular_color[2]]
                     # emissive
-                    matInfo['emissive'] = [mat.emit, mat.emit, mat.emit]
+                    if hasattr(mat, "emit"):
+                        matInfo['emissive'] = [mat.emit, mat.emit, mat.emit]
                     # texture
                     if len(mat.texture_slots) > 0:
                         matInfo['textures'] = []
