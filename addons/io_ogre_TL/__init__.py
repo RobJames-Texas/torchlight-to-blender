@@ -395,8 +395,6 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
     )
 
     def invoke(self, context, event):
-        # if not self.filepath:
-        #    self.filepath = bpy.path.ensure_ext(bpy.data.filepath, ".bm")
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
@@ -451,19 +449,23 @@ def menu_func_export(self, context):
 
 
 classes = (
-    config,
-    OgreImport,
-    OgreExport
+    OgreTlAddonPreferences,
+    ImportOgre,
+    ExportOgre
 )
 
 
 def register():
     logging.info('Starting io_ogre_TL %s', bl_info["version"])
-    for (cls in classes):
+    for cls in classes:
         bpy.utils.register_class(cls)
 
-    bpy.types.INFO_MT_file_import.append(menu_func_import)
-    bpy.types.INFO_MT_file_export.append(menu_func_export)
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
+        bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
+    else:
+        bpy.types.INFO_MT_file_import.append(menu_func_import)
+        bpy.types.INFO_MT_file_export.append(menu_func_export)
 
     # read user preferences
     config.update_from_addon_preference(bpy.context)
@@ -474,8 +476,12 @@ def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
 
-    bpy.types.INFO_MT_file_import.remove(menu_func_import)
-    bpy.types.INFO_MT_file_export.remove(menu_func_export)
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
+        bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
+    else:
+        bpy.types.INFO_MT_file_import.remove(menu_func_import)
+        bpy.types.INFO_MT_file_export.remove(menu_func_export)
 
 
 if __name__ == "__main__":

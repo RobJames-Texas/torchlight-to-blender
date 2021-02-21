@@ -109,11 +109,13 @@ History:<br>
 # from Blender import *
 from xml.dom import minidom
 import bpy
+import operator
 from mathutils import Vector, Matrix
 import math
 import os
 import subprocess
 import shutil
+from functools import reduce
 
 SHOW_EXPORT_DUMPS = False
 SHOW_EXPORT_TRACE = False
@@ -204,8 +206,9 @@ class Skeleton(object):
         self.armature.hide = False
 
         # get ogre bone ids - need to be in edit mode to access edit_bones
-        prev = bpy.context.scene.objects.active
-        bpy.context.scene.objects.active = self.armature
+        # prev = bpy.context.scene.objects.active
+        prev = bpy.context.object
+        setActiveObject(bpy.context, self.armature)
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         bpy.ops.object.mode_set(mode='EDIT', toggle=False)
         for bone in data.edit_bones:
@@ -213,7 +216,7 @@ class Skeleton(object):
                 self.ids[bone.name] = bone['OGREID']
 
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
-        bpy.context.scene.objects.active = prev
+        setActiveObject(bpy.context, prev)
         self.armature.hide = self.hidden
 
         # Allocate bone ids
@@ -234,15 +237,15 @@ class Skeleton(object):
         # calculate bone rest matrices
         rot = Matrix.Rotation(-1.5707963, 4, 'X')  # Rotate to y-up coordinates
         fix = Matrix.Rotation(1.5707963, 4, 'Z')   # Fix bone axis
-        fix *= Matrix.Rotation(3.141592653, 4, 'X')
+        fix = matmul([fix, Matrix.Rotation(3.141592653, 4, 'X')])
         self.rest = [None] * len(self.bones)
         for i, bone in enumerate(self.bones):
             if bone.parent:
-                self.rest[i] = (bone.parent.matrix_local *
-                                fix * rot).inverted()\
-                    * bone.matrix_local * fix * rot
+                self.rest[i] = matmul([matmul([bone.parent.matrix_local,
+                                      fix, rot]).inverted(),
+                                      bone.matrix_local, fix, rot])
             else:
-                self.rest[i] = rot * bone.matrix_local * fix * rot
+                self.rest[i] = matmul([rot, bone.matrix_local, fix, rot])
 
             # Change bones list to local structure, due to blender bone
             # structures being cleared if you switch to edit mode again
@@ -300,6 +303,13 @@ class Skeleton(object):
 #########################################
 
 
+def matmul(matracies):
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        return reduce((lambda x, y: operator.matmul(x, y)), matracies)
+    else:
+        return reduce((lambda x, y: x * y), matracies)
+
+
 def bCollectAnimationData(meshData):
     if 'skeleton' not in meshData:
         return
@@ -354,19 +364,20 @@ def collectAnimationData(armature, frame_range, fps, step=1):
     mat = {}
     hidden = armature.hide
     armature.hide = False
-    prev = bpy.context.scene.objects.active
-    bpy.context.scene.objects.active = armature
+    # prev = bpy.context.scene.objects.active
+    prev = bpy.context.object
+    setActiveObject(bpy.context, armature)
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
     bpy.ops.object.mode_set(mode='EDIT', toggle=False)
     for b in armature.data.edit_bones:
         if b.parent:
-            mat[b.name] = fix2 * \
-                b.parent.matrix.to_3x3().transposed() * \
-                b.matrix.to_3x3()
+            mat[b.name] = matmul([fix2,
+                                  b.parent.matrix.to_3x3().transposed(),
+                                  b.matrix.to_3x3()])
         else:
-            mat[b.name] = fix1 * b.matrix.to_3x3()
+            mat[b.name] = matmul([fix1, b.matrix.to_3x3()])
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
-    bpy.context.scene.objects.active = prev
+    setActiveObject(bpy.context, prev)
     armature.hide = hidden
 
     # Collect data
@@ -475,6 +486,15 @@ def xSaveAnimation(animation, xDoc, xAnimations):
                 keyframe.appendChild(scale)
 
 
+# borrowed from here:
+# https://theduckcow.com/2019/update-addons-both-blender-28-and-27-support/
+def setActiveObject(context, obj):
+    if hasattr(context, "view_layer"):
+        # 2.8
+        context.view_layer.objects.active = obj
+    else:
+        # 2.7
+        context.scene.objects.active = obj
 #########################################
 
 
@@ -1355,6 +1375,15 @@ def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
         return False
 
 
+# borrowed from here:
+# https://theduckcow.com/2019/update-addons-both-blender-28-and-27-support/
+def select_get(object):
+    if hasattr(object, "select_get"):
+        return object.select_get()
+    else:
+        return object.select
+
+
 def save(operator, context, filepath,
          xml_converter=None,
          keep_xml=False,
@@ -1389,7 +1418,7 @@ def save(operator, context, filepath,
     selectedObjects = []
     scn = bpy.context.scene
     for ob in scn.objects:
-        if ob.select is True and ob.type != 'ARMATURE':
+        if select_get(ob) is True and ob.type != 'ARMATURE':
             selectedObjects.append(ob)
 
     if len(selectedObjects) == 0:

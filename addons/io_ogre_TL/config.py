@@ -128,10 +128,26 @@ def save_config():
 
 
 def update_from_addon_preference(context):
-    addon_preferences = \
-        context.user_preferences.addons["io_ogre_TL"].preferences
+    addon_preferences = get_preferences(context)
 
     for key in _CONFIG_TAGS_:
         addon_pref_value = getattr(addon_preferences, key, None)
         if addon_pref_value is not None:
             CONFIG[key] = addon_pref_value
+
+
+# borrowed from here:
+# https://theduckcow.com/2019/update-addons-both-blender-28-and-27-support/
+def get_preferences(context=None):
+    """Multi version compatibility for getting preferences"""
+    if not context:
+        context = bpy.context
+    prefs = None
+    if hasattr(context, "user_preferences"):
+        prefs = context.user_preferences.addons.get("io_ogre_TL", None)
+    elif hasattr(context, "preferences"):
+        prefs = context.preferences.addons.get("io_ogre_TL", None)
+    if prefs:
+        return prefs.preferences
+    else:
+        raise Exception("Could not fetch user preferences")

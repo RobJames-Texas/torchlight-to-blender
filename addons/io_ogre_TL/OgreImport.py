@@ -19,12 +19,14 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 
 """
 
+import operator
 import subprocess
 import os
 import math
 from mathutils import Vector, Matrix
 import bpy
 from xml.dom import minidom
+from functools import reduce
 __author__ = "Rob James"
 __version__ = "0.8.18 02-Feb-2020"
 
@@ -185,6 +187,22 @@ def GetValidBlenderName(name):
         print("WARNING: Name truncated (" + name + " -> " + newname + ")")
 
     return newname
+
+
+# borrowed from here:
+# https://theduckcow.com/2019/update-addons-both-blender-28-and-27-support/
+def select_set(object, state):
+    if hasattr(object, "select_set"):
+        object.select_set(state)
+    else:
+        object.select = state
+
+
+def matmul(matracies):
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        return reduce((lambda x, y: operator.matmul(x, y)), matracies)
+    else:
+        return reduce((lambda x, y: x * y), matracies)
 
 
 def xOpenFile(filename):
@@ -658,8 +676,8 @@ def calcBoneHeadPositions(BonesData):
 
                 protmat = Matrix.Rotation(prot[3], 3, Vector(
                     [prot[0], prot[1], prot[2]])).inverted()
-                newposh = protmat.transposed(
-                ) * Vector([posh[0], posh[1], posh[2]])  # 03
+                newposh = matmul([protmat.transposed(),
+                                 Vector([posh[0], posh[1], posh[2]])])  # 03
                 positionh = VectorSum(ppos, newposh)
 
                 posh = positionh
@@ -677,7 +695,8 @@ def calcBoneRotations(BonesDic):
     for bone in BonesDic.keys():
         obj = bpy.data.objects.new(bone, None)
         objDic[bone] = obj
-        scn.objects.link(obj)
+        # scn.objects.link(obj)
+        addObjectToScene(bpy.context, obj)
     # print("all objects created")
     # print(bpy.data.objects)
     for bone in BonesDic.keys():
@@ -695,7 +714,8 @@ def calcBoneRotations(BonesDic):
         obj.location = [loc[0], -loc[2], loc[1]]
         obj.rotation_euler = [euler[0], euler[1], euler[2]]  # 02
     # Redraw()
-    scn.update()
+    scnUpdate()
+
     # print("all objects rotated")
     for bone in BonesDic.keys():
         obj = objDic.get(bone)
@@ -710,10 +730,10 @@ def calcBoneRotations(BonesDic):
     # TODO cyclic
     for bone in BonesDic.keys():
         obj = objDic.get(bone)
-        scn.objects.unlink(obj)  # TODO: cyclic message in console
+        removeObjectFromScene(bpy.context, obj)
         bpy.data.objects.remove(obj)
 
-    scn.update()
+    scnUpdate()
 
 
 def VectorSum(vec1, vec2):
@@ -726,6 +746,13 @@ def VectorSum(vec1, vec2):
 
 
 ###############################################################################
+
+def scnUpdate():
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        bpy.context.view_layer.update()
+    else:
+        bpy.context.scene.update()
+
 
 def quaternionFromAngleAxis(angle, x, y, z):
     r = angle * 0.5
@@ -833,11 +860,12 @@ def bCreateAnimations(meshData):
         fix2 = Matrix([(0, 1, 0), (0, 0, 1), (1, 0, 0)])
         for bone in rig.pose.bones:
             if bone.parent:
-                mat[bone.name] = (fix2 *
-                                  bone.parent.matrix.to_3x3().transposed() *
-                                  bone.matrix.to_3x3())
+                mat[bone.name] = \
+                    matmul([fix2,
+                           bone.parent.matrix.to_3x3().transposed(),
+                           bone.matrix.to_3x3()])
             else:
-                mat[bone.name] = fix1 * bone.matrix.to_3x3()
+                mat[bone.name] = matmul([fix1, bone.matrix.to_3x3()])
 
         for name in sorted(meshData['animations'].keys(), reverse=True):
             action = bpy.data.actions.new(name)
@@ -894,8 +922,6 @@ def bCreateMesh(meshData, folder, name, filepath):
 
     # from collected data create all sub meshes
     subObjs = bCreateSubMeshes(meshData, name)
-    # skin submeshes
-    # bSkinMesh(subObjs)
 
     # Move to parent skeleton if there
     if 'armature' in meshData:
@@ -909,7 +935,7 @@ def bCreateMesh(meshData, folder, name, filepath):
 
     # temporarily select all imported objects
     for subOb in subObjs:
-        subOb.select = True
+        select_set(subOb, True)
 
     if SHOW_IMPORT_DUMPS:
         importDump = filepath + "IDump"
@@ -927,14 +953,19 @@ def bCreateSkeleton(meshData, name):
     amt = bpy.data.armatures.new(name)
     rig = bpy.data.objects.new(name, amt)
     meshData['rig'] = rig
-    # rig.location = origin
-    rig.show_x_ray = True
-    # amt.show_names = True
+    if hasattr(rig, "show_in_front"):
+        rig.show_in_front = True
+        rig.display_type = 'WIRE'
+    else:
+        rig.show_x_ray = True
+
     # Link object to scene
     scn = bpy.context.scene
-    scn.objects.link(rig)
-    scn.objects.active = rig
-    scn.update()
+    # scn.objects.link(rig)
+    addObjectToScene(bpy.context, rig)
+    # scn.objects.active = rig
+    setActiveObject(bpy.context, rig)
+    scnUpdate()
 
     # Chose default length of bones with no children
     averageBone = 0
@@ -1013,19 +1044,6 @@ def bCreateSkeleton(meshData, name):
             bpy.context.object.data.edit_bones.remove(amt.edit_bones[bone])
 
     bpy.ops.object.mode_set(mode='OBJECT')
-#    for (bname, pname, vector) in boneTable:
-#        bone = amt.edit_bones.new(bname)
-#        if pname:
-#            parent = amt.edit_bones[pname]
-#            bone.parent = parent
-#            bone.head = parent.tail
-#            bone.use_connect = False
-#            (trans, rot, scale) = parent.matrix.decompose()
-#        else:
-#            bone.head = (0,0,0)
-#            rot = Matrix.Translation((0,0,0))    # identity matrix
-#        bone.tail = rot * Vector(vector) + bone.head
-#    bpy.ops.object.mode_set(mode='OBJECT')
 
 
 def bMergeVertices(subMesh):
@@ -1054,6 +1072,231 @@ def bMergeVertices(subMesh):
 
 
 def bCreateSubMeshes(meshData, meshName):
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        return twoEightCreateSubMeshes(meshData, meshName)
+    else:
+        return legacyBCreateSubmeshes(meshData, meshName)
+
+
+def twoEightCreateSubMeshes(meshData, meshName):
+    allObjects = []
+    submeshes = meshData['submeshes']
+    scene = bpy.context.scene
+    layer = bpy.context.view_layer
+
+    for subMeshIndex in range(len(submeshes)):
+        subMeshData = submeshes[subMeshIndex]
+        subMeshName = subMeshData['material']
+
+        # Create mesh and object
+        me = bpy.data.meshes.new(subMeshName)
+        ob = bpy.data.objects.new(subMeshName, me)
+        # Link object to scene
+        scene.collection.objects.link(ob)
+        layer.objects.active = ob
+        layer.update()
+        # check for submesh geometry, or take the shared one
+        if 'geometry' in subMeshData.keys():
+            geometry = subMeshData['geometry']
+        else:
+            geometry = meshData['sharedgeometry']
+
+        verts = geometry['positions']
+        faces = subMeshData['faces']
+        hasNormals = False
+        if 'normals' in geometry.keys():
+            normals = geometry['normals']
+            hasNormals = True
+        # mesh vertices and faces
+
+        VertLength = len(verts)
+        FaceLength = len(faces)
+        me.vertices.add(VertLength)
+        me.loops.add(FaceLength * 3)
+        me.polygons.add(FaceLength)
+        for i in range(VertLength):
+            me.vertices[i].co = verts[i]
+            if hasNormals:
+                me.vertices[i].normal = Vector((normals[i][0],
+                                                normals[i][1],
+                                                normals[i][2]))
+
+        for i in range(FaceLength):
+            me.loops[i*3].vertex_index = faces[i][0]
+            me.loops[i*3+1].vertex_index = faces[i][1]
+            me.loops[i*3+2].vertex_index = faces[i][2]
+            me.polygons[i].loop_start = i*3
+            me.polygons[i].loop_total = 3
+            me.polygons[i].use_smooth
+
+        hasTexture = False
+        # material for the submesh
+        # Create image texture from image.
+        if subMeshName in meshData['materials']:
+            matInfo = meshData['materials'][subMeshName]  # material data
+            if 'texture' in matInfo:
+                texturePath = matInfo['texture']
+                if texturePath:
+                    hasTexture = True
+                    # try to find among already loaded images
+                    tex = None
+                    for lTex in bpy.data.textures:
+                        if lTex.type == 'IMAGE':
+                            if lTex.image.name == matInfo['imageNameOnly']:
+                                tex = lTex
+                                break
+                    if not tex:
+                        tex = bpy.data.textures.new('ColorTex', type='IMAGE')
+                        tex.image = bpy.data.images.load(texturePath)
+                        tex.use_alpha = True
+
+            # Create shadeless material and MTex
+            mat = bpy.data.materials.new(subMeshName)
+            mat.use_nodes = True
+            bsdf = mat.node_tree.nodes.get('Principled BSDF')
+            assert(bsdf)
+
+            # ambient
+            # if 'ambient' in matInfo: # no AO in eevee
+            #     mat.ambient = matInfo['ambient'][0]
+            # diffuse
+            if 'diffuse' in matInfo:
+                # mat.diffuse_color = matInfo['diffuse']
+                r, g, b = matInfo['diffuse']
+                bsdf.inputs['Base Color'].default_value = [r, g, b, 1]
+            # specular
+            if 'specular' in matInfo:
+                # this didn't look right
+                # r, g, b = matInfo['specular']
+                # gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
+                bsdf.inputs['Specular'].default_value = 0
+            # emmisive
+            if 'emissive' in matInfo:
+                # this didn't look right
+                # r, g, b = matInfo['emissive']
+                # bsdf.inputs['Emission'].default_value = [r, g, b, 1]
+                bsdf.inputs['Emission'].default_value = [0, 0, 0, 1]
+            # mat.use_shadeless = True
+            node_texture = mat.node_tree.nodes.new(type='ShaderNodeTexImage')
+            node_texture.location = 0, 200
+            # mtex = mat.texture_slots.add()
+            if hasTexture:
+                # mtex.texture = tex
+                node_texture.image = tex.image
+            links = mat.node_tree.links
+            links.new(node_texture.outputs[0], bsdf.inputs[0])
+            # mtex.texture_coords = 'UV'
+            # mtex.use_map_color_diffuse = True
+            uvmap = mat.node_tree.nodes.new(type='ShaderNodeUVMap')
+            uvmap.uv_map = 'UVLayer0'
+            links.new(uvmap.outputs['UV'], node_texture.inputs['Vector'])
+
+            # add material to object
+            ob.data.materials.append(mat)
+
+        # texture coordinates
+        if 'texcoordsets' in geometry and 'uvsets' in geometry:
+            uvsets = geometry['uvsets']
+            for j in range(geometry['texcoordsets']):
+                uvData = me.uv_layers.new(name='UVLayer'+str(j)).data
+                loopIndex = 0
+                for face in faces:
+                    for v in face:
+                        uvData[loopIndex].uv = uvsets[v][j]
+                        loopIndex += 1
+
+        # vertex colors
+        if 'vertexcolors' in geometry:
+            colourData = me.vertex_colors.new(name='Colour'+str(j)).data
+            vcolors = geometry['vertexcolors']
+            loopIndex = 0
+            for face in faces:
+                for v in face:
+                    colourData[loopIndex].color = vcolors[v]
+                    loopIndex += 1
+
+            # Vertex Alpha
+            for c in vcolors:
+                if c[3] != 1.0:
+                    alphaData = me.vertex_colors.new(name='Alpha'+str(j)).data
+                    loopIndex = 0
+                    for face in faces:
+                        for v in face:
+                            colourData[loopIndex].color[3] = vcolors[v][3]
+                            loopIndex += 1
+                    break
+
+        # bone assignments:
+        if 'boneIDs' in meshData:
+            if 'boneassignments' in geometry.keys():
+                vgroups = geometry['boneassignments']
+                for vgname, vgroup in vgroups.items():
+                    grp = ob.vertex_groups.new(name=vgname)
+                    for (v, w) in vgroup:
+                        grp.add([v], w, 'REPLACE')
+        # Give mesh object an armature modifier, using vertex groups but
+        # not envelopes
+        if 'skeleton' in meshData:
+            skeletonName = meshData['skeletonName']
+            mod = ob.modifiers.new('OgreSkeleton', 'ARMATURE')
+            mod.object = bpy.data.objects[skeletonName]  # gets the rig object
+            mod.use_bone_envelopes = False
+            mod.use_vertex_groups = True
+        elif 'armature' in meshData:
+            mod = ob.modifiers.new('OgreSkeleton', 'ARMATURE')
+            mod.object = meshData['armature']
+            mod.use_bone_envelopes = False
+            mod.use_vertex_groups = True
+
+        # Shape keys (poses)
+        if 'poses' in meshData:
+            base = None
+            for pose in meshData['poses']:
+                if(pose['submesh'] == subMeshIndex):
+                    # must have base shape
+                    if base is None:
+                        base = ob.shape_key_add(name='Basis')
+                    name = pose['name']
+                    print('creating pose', name)
+                    shape = ob.shape_key_add(name=name)
+                    for vkey in pose['data']:
+                        b = base.data[vkey[0]].co
+                        me.shape_keys.key_blocks[name].data[vkey[0]].co = \
+                            [vkey[1] + b[0], vkey[2] + b[1], vkey[3] + b[2]]
+
+        # Update mesh with new data
+        me.update(calc_edges=True)
+        me.use_auto_smooth = True
+
+        bpy.ops.object.editmode_toggle()
+        bpy.ops.mesh.remove_doubles(threshold=0.001)
+        bpy.ops.object.editmode_toggle()
+
+        # try to set custom normals
+        if hasNormals:
+            noChange = len(me.loops) == len(faces)*3
+            if not noChange:
+                print('Removed',  len(faces) - len(me.loops)/3, 'faces')
+            split = []
+            polyIndex = 0
+            for face in faces:
+                if noChange or matchFace(face, verts, me, polyIndex):
+                    polyIndex += 1
+                    for vx in face:
+                        split.append(normals[vx])
+
+            if len(split) == len(me.loops):
+                me.normals_split_custom_set(split)
+            else:
+                print('Warning: Failed to import mesh normals', polyIndex, '/',
+                      len(me.polygons))
+
+        allObjects.append(ob)
+
+    return allObjects
+
+
+def legacyBCreateSubmeshes(meshData, meshName):
     allObjects = []
     submeshes = meshData['submeshes']
 
@@ -1066,9 +1309,11 @@ def bCreateSubMeshes(meshData, meshName):
         ob = bpy.data.objects.new(subMeshName, me)
         # Link object to scene
         scn = bpy.context.scene
-        scn.objects.link(ob)
-        scn.objects.active = ob
-        scn.update()
+        # scn.objects.link(ob)
+        addObjectToScene(bpy.context, ob)
+        # scn.objects.active = ob
+        setActiveObject(bpy.context, ob)
+        scnUpdate()
         # check for submesh geometry, or take the shared one
         if 'geometry' in subMeshData.keys():
             geometry = subMeshData['geometry']
@@ -1104,7 +1349,6 @@ def bCreateSubMeshes(meshData, meshName):
                 if hasNormals:
                     me.vertices[i].normal = Vector(
                         (normals[i][0], normals[i][1], normals[i][2]))
-            # me.vertices[VertLength].co = verts[0]
             for i in range(FaceLength):
                 NewFace = (faces[i][0], faces[i][1], faces[i][2], 0)
                 me.tessfaces[i].vertices_raw = NewFace
@@ -1118,7 +1362,6 @@ def bCreateSubMeshes(meshData, meshName):
             meshFaces = me.tessfaces
             meshUV_textures = me.tessface_uv_textures
             meshVertex_colors = me.tessface_vertex_colors
-            # meshUV_textures = me.uv_textures
 
         # smooth
         for f in meshFaces:
@@ -1335,11 +1578,38 @@ def convertXML(convertor, filename, use_existing=True):
             return False
 
 
+# borrowed from here:
+# https://theduckcow.com/2019/update-addons-both-blender-28-and-27-support/
+def setActiveObject(context, obj):
+    if hasattr(context, "view_layer"):
+        # 2.8
+        context.view_layer.objects.active = obj
+    else:
+        # 2.7
+        context.scene.objects.active = obj
+
+
+def addObjectToScene(context, obj):
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        context.scene.collection.objects.link(obj)
+    else:
+        context.scene.objects.link(obj)
+
+
+def removeObjectFromScene(context, obj):
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        context.scene.collection.objects.unlink(obj)
+    else:
+        context.scene.objects.unlink(obj)
+
+
 def getBoneNameMapFromArmature(arm):
     # get ogre bone ids - need to be in edit mode to access edit_bones.
     # Arm should already be the active object
     boneMap = {}
-    bpy.context.scene.objects.active = arm
+
+    setActiveObject(bpy.context, arm)
+
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
     bpy.ops.object.mode_set(mode='EDIT', toggle=False)
     for bone in arm.data.edit_bones:
