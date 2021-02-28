@@ -1157,7 +1157,7 @@ def twoEightCreateSubMeshes(meshData, meshName):
             assert(bsdf)
 
             # ambient
-            # if 'ambient' in matInfo: # no AO in eevee
+            # if 'ambient' in matInfo:  # no AO in eevee
             #     mat.ambient = matInfo['ambient'][0]
             # diffuse
             if 'diffuse' in matInfo:
@@ -1170,15 +1170,9 @@ def twoEightCreateSubMeshes(meshData, meshName):
                 # r, g, b = matInfo['specular']
                 # gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
                 bsdf.inputs['Specular'].default_value = 0
-            # emmisive
-            if 'emissive' in matInfo:
-                # this didn't look right
-                # r, g, b = matInfo['emissive']
-                # bsdf.inputs['Emission'].default_value = [r, g, b, 1]
-                bsdf.inputs['Emission'].default_value = [0, 0, 0, 1]
             # mat.use_shadeless = True
             node_texture = mat.node_tree.nodes.new(type='ShaderNodeTexImage')
-            node_texture.location = 0, 200
+            node_texture.location = -300, 0
             # mtex = mat.texture_slots.add()
             if hasTexture:
                 # mtex.texture = tex
@@ -1190,6 +1184,39 @@ def twoEightCreateSubMeshes(meshData, meshName):
             uvmap = mat.node_tree.nodes.new(type='ShaderNodeUVMap')
             uvmap.uv_map = 'UVLayer0'
             links.new(uvmap.outputs['UV'], node_texture.inputs['Vector'])
+
+            # emmisive
+            if 'emissive' in matInfo:
+                er, eg, eb = matInfo['emissive']
+                bsdf.inputs['Emission'].default_value = [0, 0, 0, 1]
+
+                sepRgb = mat.node_tree.nodes.new(type='ShaderNodeSeparateRGB')
+                links.new(node_texture.outputs['Color'],
+                          sepRgb.inputs['Image'])
+                rChan = mat.node_tree.nodes.new(type='ShaderNodeEmission')
+                rChan.inputs['Strength'].default_value = er
+                links.new(sepRgb.outputs['R'], rChan.inputs['Color'])
+                rShade = mat.node_tree.nodes.new(type='ShaderNodeShaderToRGB')
+                links.new(rChan.outputs[0], rShade.inputs[0])
+
+                gChan = mat.node_tree.nodes.new(type='ShaderNodeEmission')
+                gChan.inputs['Strength'].default_value = eg
+                links.new(sepRgb.outputs['G'], gChan.inputs['Color'])
+                gShade = mat.node_tree.nodes.new(type='ShaderNodeShaderToRGB')
+                links.new(gChan.outputs[0], gShade.inputs[0])
+
+                bChan = mat.node_tree.nodes.new(type='ShaderNodeEmission')
+                bChan.inputs['Strength'].default_value = eb
+                links.new(sepRgb.outputs['B'], bChan.inputs['Color'])
+                bShade = mat.node_tree.nodes.new(type='ShaderNodeShaderToRGB')
+                links.new(bChan.outputs[0], bShade.inputs[0])
+
+                combineRGB = mat.node_tree.nodes.new(
+                    type='ShaderNodeCombineRGB')
+                links.new(rShade.outputs['Color'], combineRGB.inputs['R'])
+                links.new(gShade.outputs['Color'], combineRGB.inputs['G'])
+                links.new(bShade.outputs['Color'], combineRGB.inputs['B'])
+                links.new(combineRGB.outputs['Image'], bsdf.inputs['Emission'])
 
             # add material to object
             ob.data.materials.append(mat)
