@@ -1172,6 +1172,7 @@ def twoEightCreateSubMeshes(meshData, meshName):
                 bsdf.inputs['Specular'].default_value = 0
             # mat.use_shadeless = True
             node_texture = mat.node_tree.nodes.new(type='ShaderNodeTexImage')
+            node_texture.name = 'DiffuseTexture'
             node_texture.location = -300, 0
             # mtex = mat.texture_slots.add()
             if hasTexture:
@@ -1194,18 +1195,21 @@ def twoEightCreateSubMeshes(meshData, meshName):
                 links.new(node_texture.outputs['Color'],
                           sepRgb.inputs['Image'])
                 rChan = mat.node_tree.nodes.new(type='ShaderNodeEmission')
+                rChan.name = 'EmissionR'
                 rChan.inputs['Strength'].default_value = er
                 links.new(sepRgb.outputs['R'], rChan.inputs['Color'])
                 rShade = mat.node_tree.nodes.new(type='ShaderNodeShaderToRGB')
                 links.new(rChan.outputs[0], rShade.inputs[0])
 
                 gChan = mat.node_tree.nodes.new(type='ShaderNodeEmission')
+                gChan.name = 'EmissionG'
                 gChan.inputs['Strength'].default_value = eg
                 links.new(sepRgb.outputs['G'], gChan.inputs['Color'])
                 gShade = mat.node_tree.nodes.new(type='ShaderNodeShaderToRGB')
                 links.new(gChan.outputs[0], gShade.inputs[0])
 
                 bChan = mat.node_tree.nodes.new(type='ShaderNodeEmission')
+                bChan.name = 'EmissionB'
                 bChan.inputs['Strength'].default_value = eb
                 links.new(sepRgb.outputs['B'], bChan.inputs['Color'])
                 bShade = mat.node_tree.nodes.new(type='ShaderNodeShaderToRGB')

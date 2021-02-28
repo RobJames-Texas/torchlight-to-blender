@@ -1339,6 +1339,74 @@ def bCollectSkeletonData(blenderMeshData, selectedObjects):
 
 
 def bCollectMaterialData(blenderMeshData, selectedObjects):
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        # 2.8
+        bCollectMaterialDataTwoEight(blenderMeshData, selectedObjects)
+    else:
+        # Legacy
+        bCollectMaterialDataLegacy(blenderMeshData, selectedObjects)
+
+
+def bCollectMaterialDataTwoEight(blenderMeshData, selectedObjects):
+    allMaterials = {}
+    blenderMeshData['materials'] = allMaterials
+
+    for ob in selectedObjects:
+        if ob.type == 'MESH' and len(ob.data.materials) > 0:
+            for mat in ob.data.materials:
+                # mat = bpy.types.Material ##
+                if mat and mat.name not in allMaterials:
+                    matInfo = {}
+                    bsdf = mat.node_tree.nodes.get('Principled BSDF')
+                    assert(bsdf)
+                    allMaterials[mat.name] = matInfo
+
+                    # ambient  - none in eevee
+                    # TL2 Default values
+                    matInfo['ambient'] = [0.588, 0.588, 0.588]
+                    # diffuse
+                    matInfo['diffuse'] = [bsdf.inputs['Base Color']
+                                          .default_value[0],
+                                          bsdf.inputs['Base Color']
+                                          .default_value[1],
+                                          bsdf.inputs['Base Color']
+                                          .default_value[2]]
+                    # specular
+                    # TL2 Default values
+                    matInfo['specular'] = [0, 0, 0]
+
+                    # emissive
+                    emissionR = mat.node_tree.nodes.get('EmissionR', None)
+                    emissionG = mat.node_tree.nodes.get('EmissionG', None)
+                    emissionB = mat.node_tree.nodes.get('EmissionB', None)
+                    if emissionR is not None\
+                        and emissionG is not None\
+                            and emissionB is not None:
+                        # Node setup created during import
+                        matInfo['emissive'] = [
+                            emissionR.inputs['Strength'].default_value,
+                            emissionG.inputs['Strength'].default_value,
+                            emissionB.inputs['Strength'].default_value
+                        ]
+                    else:
+                        # TL2 Default values
+                        matInfo['emissive'] = [0.4, 0.4, 0.4]
+
+                    # texture
+                    textures = [x for x in mat.node_tree.nodes
+                                if x.bl_idname == 'ShaderNodeTexImage']
+                    if len(textures) > 0:
+                        matInfo['textures'] = []
+                        for texImage in textures:
+                            if texImage and texImage.image:
+                                texInfo = {}
+                                texInfo['texture'] = texImage.image.name
+                                texInfo['texture_path'] = \
+                                    texImage.image.filepath
+                                matInfo['textures'].append(texInfo)
+
+
+def bCollectMaterialDataLegacy(blenderMeshData, selectedObjects):
     allMaterials = {}
     blenderMeshData['materials'] = allMaterials
 
@@ -1350,23 +1418,19 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                     matInfo = {}
                     allMaterials[mat.name] = matInfo
                     # ambient
-                    if hasattr(mat, "ambient"):
-                        matInfo['ambient'] = [mat.ambient,
-                                              mat.ambient,
-                                              mat.ambient]
+                    matInfo['ambient'] = [mat.ambient,
+                                          mat.ambient,
+                                          mat.ambient]
                     # diffuse
-                    if hasattr(mat, "diffuse_color"):
-                        matInfo['diffuse'] = [mat.diffuse_color[0],
-                                              mat.diffuse_color[1],
-                                              mat.diffuse_color[2]]
+                    matInfo['diffuse'] = [mat.diffuse_color[0],
+                                          mat.diffuse_color[1],
+                                          mat.diffuse_color[2]]
                     # specular
-                    if hasattr(mat, "specular_color"):
-                        matInfo['specular'] = [mat.specular_color[0],
-                                               mat.specular_color[1],
-                                               mat.specular_color[2]]
+                    matInfo['specular'] = [mat.specular_color[0],
+                                           mat.specular_color[1],
+                                           mat.specular_color[2]]
                     # emissive
-                    if hasattr(mat, "emit"):
-                        matInfo['emissive'] = [mat.emit, mat.emit, mat.emit]
+                    matInfo['emissive'] = [mat.emit, mat.emit, mat.emit]
                     # texture
                     if len(mat.texture_slots) > 0:
                         matInfo['textures'] = []
@@ -1381,7 +1445,7 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
 
 
 def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
-                     export_skeleton, keep_xml, export_edgelists):
+                     export_skeleton, keep_xml, export_edgelists=False):
 
     if ogreXMLconverter is None:
         return False
@@ -1402,7 +1466,11 @@ def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
             # for skeleton
             skelFile = os.path.splitext(filepath)[0]  # removing .mesh
             xmlFilepath = skelFile + ".skeleton.xml"
-            subprocess.call([ogreXMLconverter, xmlFilepath])
+            if export_edgelists:
+                subprocess.call([ogreXMLconverter, xmlFilepath])
+            else:
+                subprocess.call([ogreXMLconverter, "-e", xmlFilepath])
+
             # remove XML file
             if keep_xml is False:
                 os.unlink("%s" % xmlFilepath)
