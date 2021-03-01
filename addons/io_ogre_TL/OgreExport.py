@@ -917,7 +917,12 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
             _sm_verts_.append([])
 
         # mesh = bpy.types.Mesh ##
-        mesh = toMesh(ob, applyModifiers)
+        if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+            tobj = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())\
+                if applyModifiers else ob
+            mesh = tobj.to_mesh()
+        else:
+            mesh = toMesh(ob, applyModifiers)
 
         # use bmesh to triangulate
         bm = bmesh.new()
@@ -1118,7 +1123,12 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
             if m:
                 materialName = m.name
         # mesh = bpy.types.Mesh ##
-        mesh = toMesh(ob, applyModifiers)
+        if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+            tobj = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())\
+                if applyModifiers else ob
+            mesh = tobj.to_mesh()
+        else:
+            mesh = toMesh(ob, applyModifiers)
 
         # use bmesh to triangulate
         bm = bmesh.new()
