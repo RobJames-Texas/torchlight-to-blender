@@ -1,24 +1,3 @@
-#!BPY
-
-"""
-Name: 'OGRE for Torchlight (*.MESH)'
-Blender: 2.63a, 2.77a, 2.79
-Group: 'Import/Export'
-Tooltip: 'Import/Export Torchlight OGRE mesh files'
-
-Author: Rob James
-Original Author: Dusho
-
-There were some great updates added to a forked version of this script
-for a game called Kenshi by "someone".
-I'm attempting to put the relevent changes into the plugin to improve
-Torchlight editing.
-
-Thanks goes to 'goatman' for his port of Ogre export script from 2.49b to 2.5x,
-and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
-
-"""
-
 import operator
 import subprocess
 import os
@@ -27,129 +6,6 @@ from mathutils import Vector, Matrix
 import bpy
 from xml.dom import minidom
 from functools import reduce
-__author__ = "Rob James"
-__version__ = "0.8.18 02-Feb-2020"
-
-__bpydoc__ = """\
-This script imports/exports Torchlight Ogre models into/from Blender.
-
-Supported:<br>
-    * import/export of basic meshes
-    * import/export of skeleton
-    * import/export of animations
-    * import/export of vertex weights (ability to import characters and
-      adjust rigs)
-    * import/export of vertex colour (RGB)
-    * import/export of vertex alpha (Uses second vertex colour
-      layer called Alpha)
-    * import/export of shape keys
-    * Calculation of tangents and binormals for export
-    * Toggle of edge lists during export
-
-Known issues:<br>
-    * imported materials will lose certain informations not applicable to
-      Blender when exported
-
-History:<br>
-    * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded
-             to 0 and removed.
-    * v0.8.17  (17-Jan-2020)- Updated user settings panel to be more
-             configurable. Added toggle for edge lists.
-    * v0.8.16  (15-Oct-2019) - Fixed exporting vertex colour + vertex alpha
-             From Kenshi add on
-    * v0.8.15  (17-Jul-2019) - Added option to import normals
-             From Kenshi add on
-    * v0.8.14  (14-May-2019) - Fixed blender deleting zero length bones
-             From Kenshi add on
-    * v0.8.13  (19-Mar-2019) - Exporting material files is optional
-             From Kenshi add on
-    * v0.8.12  (14-Mar-2019) - Fixed error exporting animation scale keyframes
-             From Kenshi add on
-    * v0.8.11  (26-Feb-2019) - Fixed tangents and binormals for mirrorred uvs
-             From Kenshi add on
-    * v0.8.10  (32-Jan-2019) - Fixed export when mesh has multiple uv sets
-             From Kenshi add on
-    * v0.8.9   (08-Mar-2018) - Added import option to match weight maps and
-             link with a previously imported skeleton
-             From Kenshi add on
-    * v0.8.8   (26-feb-2018) - Fixed export triangulation and custom normals
-             From Kenshi add on
-    * v0.8.7   (01-Feb-2018) - Scene frame rate adjusted on import,
-             Fixed quatenion normalisation. From Kenshi add on
-    * v0.8.6   (31-Jan-2018) - Fixed crash exporting animations in
-             blender 2.79 From Kenshi add on
-    * v0.8.5   (02-Jan-2018) - Optimisation: Use hashmap for duplicate
-             vertex detection From Kenshi add on
-    * v0.8.4   (20-Nov-2017) - Fixed animation quaternion interpolation
-             From Kenshi addon
-    * v0.8.3   (06-Nov-2017) - Warning when linked skeleton file not found
-             From Kenshi addon
-    * v0.8.2   (25-Sep-2017) - Fixed bone translations in animations
-             From Kenshi addon
-    * v0.8.1   (28-Jul-2017) - Added alpha component to vertex colour
-             From Kenshi addon
-    * v0.8.0   (30-Jun-2017) - Added animation and shape key support.
-             Rewritten skeleton export. From Kenshi addon
-    * v0.7.2   (08-Dec-2016) - fixed divide by 0 error calculating tangents.
-             From Kenshi addon
-    * v0.7.1   (07-Sep-2016) - bug fixes. From Kenshi addon
-    * v0.7.0   (02-Sep-2016) - Persistant Ogre bone IDs, Export vertex colours.
-             Generates tangents and binormals. From Kenshi addon
-    * v0.6.2   (09-Mar-2013) - bug fixes (working with materials+textures),
-             added 'Apply modifiers' and 'Copy textures'
-    * v0.6.1   (27-Sep-2012) - updated to work with Blender 2.63a
-    * v0.6     (01-Sep-2012) - added skeleton import + vertex weights
-             import/export
-    * v0.5     (06-Mar-2012) - added material import/export
-    * v0.4.1   (29-Feb-2012) - flag for applying transformation, default=true
-    * v0.4     (28-Feb-2012) - fixing export when no UV data are present
-    * v0.3     (22-Feb-2012) - WIP - started cleaning + using OgreXMLConverter
-    * v0.2     (19-Feb-2012) - WIP - working export of geometry and faces
-    * v0.1     (18-Feb-2012) - initial 2.59 import code (from .xml)
-    * v0.0     (12-Feb-2012) - file created
-"""
-
-"""
-When importing: (x)-Blender, (x')-Ogre
-vectors: x=x', y=-z', z=y'
-UVtex: u=u', v = -v'+1
-
-Inner data representation:
-MESHDATA:
-['sharedgeometry']: {}
-    ['positions'] - vectors with [x,y,z]
-    ['normals'] - vectors with [x,y,z]
-    ['vertexcolors'] - vectors with [r,g,b,a]
-    ['texcoordsets'] - integer (number of UV sets)
-    ['uvsets'] - vectors with [u,v] * number or UV sets for
-                 vertex [[u,v]][[u,v]]...
-    ['boneassignments']: {[boneName]} - for every bone name:
-        [[vertexNumber], [weight]], [[vertexNumber], [weight]],  ..
-['submeshes'][idx]
-        [material] - string (material name)
-        [materialOrg] - original material name
-                      - for searching the in shared materials file
-        [faces] - vectors with faces [v1,v2,v3]
-        [geometry] - identical to 'sharedgeometry' data content
-['materials']
-    [(matID)]: {}
-        ['texture'] - full path to texture file
-        ['imageNameOnly'] - only image name from material file
-['skeleton']: {[boneName]} for each bone
-        ['name'] - bone name
-        ['id'] - bone ID
-        ['position'] - bone position [x,y,z]
-        ['rotation'] - bone rotation [x,y,z,angle]
-        ['parent'] - bone name of parent bone
-        ['children'] - list with names if children ([child1, child2, ...])
-['boneIDs']: {[bone ID]:[bone Name]} - dictionary with ID to name
-['skeletonName'] - name of skeleton
-
-Note: Bones store their OGREID as a custom variable so they are consistent
-      when a mesh is exported
-"""
-
-# from Blender import *
 
 SHOW_IMPORT_DUMPS = False
 SHOW_IMPORT_TRACE = False
@@ -915,13 +771,13 @@ def bCreateAnimations(meshData):
 ###############################################################################
 
 
-def bCreateMesh(meshData, folder, name, filepath):
+def bCreateMesh(meshData, folder, name, filepath, useAutoSmooth):
     if 'skeleton' in meshData:
         skeletonName = meshData['skeletonName']
         bCreateSkeleton(meshData, skeletonName)
 
     # from collected data create all sub meshes
-    subObjs = bCreateSubMeshes(meshData, name)
+    subObjs = bCreateSubMeshes(meshData, name, useAutoSmooth)
 
     # Move to parent skeleton if there
     if 'armature' in meshData:
@@ -1071,14 +927,14 @@ def bMergeVertices(subMesh):
             face[i] = map[face[i]]
 
 
-def bCreateSubMeshes(meshData, meshName):
+def bCreateSubMeshes(meshData, meshName, useAutoSmooth):
     if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-        return twoEightCreateSubMeshes(meshData, meshName)
+        return twoEightCreateSubMeshes(meshData, meshName, useAutoSmooth)
     else:
-        return legacyBCreateSubmeshes(meshData, meshName)
+        return legacyBCreateSubmeshes(meshData, meshName, useAutoSmooth)
 
 
-def twoEightCreateSubMeshes(meshData, meshName):
+def twoEightCreateSubMeshes(meshData, meshName, useAutoSmooth):
     allObjects = []
     submeshes = meshData['submeshes']
     scene = bpy.context.scene
@@ -1095,6 +951,7 @@ def twoEightCreateSubMeshes(meshData, meshName):
         scene.collection.objects.link(ob)
         layer.objects.active = ob
         layer.update()
+
         # check for submesh geometry, or take the shared one
         if 'geometry' in subMeshData.keys():
             geometry = subMeshData['geometry']
@@ -1107,8 +964,8 @@ def twoEightCreateSubMeshes(meshData, meshName):
         if 'normals' in geometry.keys():
             normals = geometry['normals']
             hasNormals = True
-        # mesh vertices and faces
 
+        # mesh vertices and faces
         VertLength = len(verts)
         FaceLength = len(faces)
         me.vertices.add(VertLength)
@@ -1297,7 +1154,14 @@ def twoEightCreateSubMeshes(meshData, meshName):
 
         # Update mesh with new data
         me.update(calc_edges=True)
-        me.use_auto_smooth = True
+
+        if useAutoSmooth:
+            # me.use_auto_smooth = True
+            ob.data.use_auto_smooth = True
+            ob.data.auto_smooth_angle = 1.5708  # 90 degrees
+        else:
+            for f in me.polygons:
+                f.use_smooth = True
 
         bpy.ops.object.editmode_toggle()
         bpy.ops.mesh.remove_doubles(threshold=0.001)
@@ -1327,7 +1191,7 @@ def twoEightCreateSubMeshes(meshData, meshName):
     return allObjects
 
 
-def legacyBCreateSubmeshes(meshData, meshName):
+def legacyBCreateSubmeshes(meshData, meshName, useAutoSmooth):
     allObjects = []
     submeshes = meshData['submeshes']
 
@@ -1345,6 +1209,7 @@ def legacyBCreateSubmeshes(meshData, meshName):
         # scn.objects.active = ob
         setActiveObject(bpy.context, ob)
         scnUpdate()
+
         # check for submesh geometry, or take the shared one
         if 'geometry' in subMeshData.keys():
             geometry = subMeshData['geometry']
@@ -1395,8 +1260,13 @@ def legacyBCreateSubmeshes(meshData, meshName):
             meshVertex_colors = me.tessface_vertex_colors
 
         # smooth
-        for f in meshFaces:
-            f.use_smooth = True
+        # auto-smooth
+        if useAutoSmooth:
+            ob.data.use_auto_smooth = True
+            ob.data.auto_smooth_angle = 1.5708  # 90 degrees
+        else:
+            for f in meshFaces:
+                f.use_smooth = True
 
         hasTexture = False
         # material for the submesh
@@ -1651,8 +1521,9 @@ def getBoneNameMapFromArmature(arm):
 
 
 def load(operator, context, filepath, xml_converter=None, keep_xml=True,
-         import_normals=True, import_shapekeys=True, import_animations=False,
-         round_frames=False, use_selected_skeleton=False):
+         import_autosmooth=False, import_normals=True, import_shapekeys=True,
+         import_animations=False, round_frames=False,
+         use_selected_skeleton=False):
     global blender_version
 
     blender_version = bpy.app.version[0]*100 + bpy.app.version[1]
@@ -1750,7 +1621,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
 
         # after collecting is done, start creating stuff#
         # create skeleton (if any) and mesh from parsed data
-        bCreateMesh(meshData, folder, onlyName, pathMeshXml)
+        bCreateMesh(meshData, folder, onlyName, pathMeshXml, import_autosmooth)
         bCreateAnimations(meshData)
         if not keep_xml:
             # cleanup by deleting the XML file we created

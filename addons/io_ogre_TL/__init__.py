@@ -20,7 +20,7 @@
 
 """
 Name: 'OGRE for Torchlight 2(*.MESH)'
-Blender: 2.63a, 2.77a, 2.79
+Blender: 2.63a, 2.77a, 2.79, 2.8+
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
 
@@ -51,7 +51,7 @@ from bpy.props import (BoolProperty,
 import logging
 import bpy
 __author__ = "Rob James"
-__version__ = "0.8.18 02-Feb-2020"
+__version__ = "0.9.00 03-Apr-2021"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -74,6 +74,7 @@ Known issues:<br>
       to Blender when exported
 
 History:<br>
+    * v0.9.00  (03-Apr-2021)- Initial support for Blender 2.8 and up
     * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded
              to 0 and removed.
     * v0.8.17  (17-Jan-2020)- Updated user settings panel to be more
@@ -208,6 +209,14 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
         default=False,
     )
 
+    import_autosmooth = BoolProperty(
+        name="Use Auto-Smooth",
+        description='Use auto-smooth instead of smooth-shading. This will'
+             ' result in a larger mesh file size, but gives you greater'
+             ' control over which edges in your mesh are smooth verses hard',
+        default=False
+    )
+
     import_normals = BoolProperty(
         name="Import Normals",
         description="Import custom mesh normals",
@@ -234,11 +243,11 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
 
     use_selected_skeleton = BoolProperty(
         name='Use selected skeleton',
-        description='Link with selected armature object rather than\
-                          importing a skeleton.\nUse this for importing\
-                          skinned meshes that don\'t have their own skeleton.\
-                          \nMake sure you have the correct skeleton selected\
-                           or the weight maps may get mixed up.',
+        description='Link with selected armature object rather than'
+                    ' importing a skeleton.\nUse this for importing'
+                    ' skinned meshes that don\'t have their own skeleton.'
+                    ' \nMake sure you have the correct skeleton selected'
+                    ' or the weight maps may get mixed up',
         default=False,
     )
 
@@ -266,6 +275,7 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
         layout = self.layout
 
         layout.prop(self, "keep_xml")
+        layout.prop(self, "import_autosmooth")
         layout.prop(self, "import_normals")
         layout.prop(self, "import_shapekeys")
 
@@ -319,15 +329,15 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
 
     export_colour = BoolProperty(
         name="Export colour",
-        description="Export vertex colour data. Name a colour layer\
-                 'Alpha' to use as the alpha component",
+        description="Export vertex colour data. Name a colour layer"
+                    " 'Alpha' to use as the alpha component",
         default=False,
     )
 
     enable_by_material = BoolProperty(
         name="Enable By Material",
-        description="Multiple materials on a mesh will be exported as\
-                 submeshes.",
+        description="Multiple materials on a mesh will be exported as"
+                    " submeshes",
         default=False,
     )
 
@@ -357,35 +367,35 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
 
     export_materials = BoolProperty(
         name="Export materials",
-        description="Export material files.",
+        description="Export material files",
         default=False,
     )
 
     overwrite_material = BoolProperty(
         name="Overwrite material",
-        description="Overwrites existing .material file, if present.",
+        description="Overwrites existing .material file, if present",
         default=False,
     )
 
     copy_textures = BoolProperty(
         name="Copy textures",
-        description="Copies material source textures to material file\
-                 location",
+        description="Copies material source textures to material file"
+                    " location",
         default=False,
     )
 
     export_skeleton = BoolProperty(
         name="Export skeleton",
-        description="Exports new skeleton and links the mesh to this new\
-                 skeleton.\nLeave off to link with existing skeleton if\
-                      applicable.",
+        description="Exports new skeleton and links the mesh to this new"
+                    " skeleton.\nLeave off to link with existing skeleton"
+                    " if applicable",
         default=False,
     )
 
     export_animation = BoolProperty(
         name="Export Animation",
-        description="Export all actions attached to the selected skeleton\
-                 as animations",
+        description="Export all actions attached to the selected skeleton"
+                    " as animations",
         default=False,
     )
 
