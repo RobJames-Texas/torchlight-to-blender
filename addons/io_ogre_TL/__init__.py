@@ -20,7 +20,7 @@
 
 """
 Name: 'OGRE for Torchlight 2(*.MESH)'
-Blender: 2.63a, 2.77a, 2.79
+Blender: 2.63a, 2.77a, 2.79, 2.8+
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
 
@@ -37,8 +37,21 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 
 """
 
+from . import config
+from bpy_extras.io_utils import (ExportHelper,
+                                 ImportHelper,
+                                 path_reference_mode,
+                                 axis_conversion,
+                                 )
+from bpy.props import (BoolProperty,
+                       FloatProperty,
+                       StringProperty,
+                       EnumProperty,
+                       )
+import logging
+import bpy
 __author__ = "Rob James"
-__version__ = "0.8.18 02-Feb-2020"
+__version__ = "0.9.00 03-Apr-2021"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -61,8 +74,9 @@ Known issues:<br>
       to Blender when exported
 
 History:<br>
-    * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded to 0
-             and removed.
+    * v0.9.00  (03-Apr-2021)- Initial support for Blender 2.8 and up
+    * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded
+             to 0 and removed.
     * v0.8.17  (17-Jan-2020)- Updated user settings panel to be more
              configurable. Added toggle for edge lists.
     * v0.8.16  (15-Oct-2019) - Fixed exporting vertex colour + vertex alpha
@@ -125,8 +139,8 @@ History:<br>
 bl_info = {
     "name": "Torchlight 2 MESH format",
     "author": "Rob James",
-    "blender": (2, 5, 9),
-    "version": (0, 8, 18),
+    "blender": (2, 80, 0),
+    "version": (0, 9, 0),
     "api": 35622,
     "location": "File > Import-Export",
     "description": ("Import-Export Torchlight 2 Model, Import MESH, UV's, "
@@ -143,20 +157,6 @@ if "bpy" in locals():
         imp.reload(OgreImport)
     if "OgreExport" in locals():
         imp.reload(OgreExport)
-
-import bpy
-import logging
-from bpy.props import (BoolProperty,
-                       FloatProperty,
-                       StringProperty,
-                       EnumProperty,
-                       )
-from bpy_extras.io_utils import (ExportHelper,
-                                 ImportHelper,
-                                 path_reference_mode,
-                                 axis_conversion,
-                                 )
-from . import config
 
 
 def findConverter(p):
@@ -204,56 +204,65 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
     filename_ext = ".mesh"
 
     keep_xml = BoolProperty(
-            name="Keep XML",
-            description="Keeps the XML file when converting from .MESH",
-            default=False,
-            )
+        name="Keep XML",
+        description="Keeps the XML file when converting from .MESH",
+        default=False,
+    )
+
+    import_autosmooth = BoolProperty(
+        name="Use Auto-Smooth",
+        description='Use auto-smooth instead of smooth-shading. This will'
+             ' result in a larger mesh file size, but gives you greater'
+             ' control over which edges in your mesh are smooth verses hard',
+        default=False
+    )
 
     import_normals = BoolProperty(
-            name="Import Normals",
-            description="Import custom mesh normals",
-            default=True,
-            )
+        name="Import Normals",
+        description="Import custom mesh normals",
+        default=True,
+    )
 
     import_animations = BoolProperty(
-            name="Import animation",
-            description="Import animations as actions",
-            default=True,
-            )
+        name="Import animation",
+        description="Import animations as actions",
+        default=True,
+    )
 
     round_frames = BoolProperty(
-            name="Adjust frame rate",
-            description="Adjust scene frame rate to match imported animation",
-            default=True,
-            )
+        name="Adjust frame rate",
+        description="Adjust scene frame rate to match imported animation",
+        default=True,
+    )
 
     import_shapekeys = BoolProperty(
-            name="Import shape keys",
-            description="Import shape keys (morphs)",
-            default=True,
-            )
+        name="Import shape keys",
+        description="Import shape keys (morphs)",
+        default=True,
+    )
 
     use_selected_skeleton = BoolProperty(
-            name='Use selected skeleton',
-            description='Link with selected armature object rather than\
-                          importing a skeleton.\nUse this for importing\
-                          skinned meshes that don\'t have their own skeleton.\
-                          \nMake sure you have the correct skeleton selected\
-                           or the weight maps may get mixed up.',
-            default=False,
-            )
+        name='Use selected skeleton',
+        description='Link with selected armature object rather than'
+                    ' importing a skeleton.\nUse this for importing'
+                    ' skinned meshes that don\'t have their own skeleton.'
+                    ' \nMake sure you have the correct skeleton selected'
+                    ' or the weight maps may get mixed up',
+        default=False,
+    )
 
     filter_glob = StringProperty(
-            default="*.mesh;*.MESH;.xml;.XML",
-            options={'HIDDEN'},
-            )
+        default="*.mesh;*.MESH;.xml;.XML",
+        options={'HIDDEN'},
+    )
 
     def execute(self, context):
         # print("Selected: " + context.active_object.name)
         from . import OgreImport
 
         keywords = self.as_keywords(ignore=("filter_glob",))
-        keywords['xml_converter'] = findConverter(config.get('OGRETOOLS_XML_CONVERTER'))
+        keywords['xml_converter'] = findConverter(
+            config.get('OGRETOOLS_XML_CONVERTER'))
 
         print('converter', keywords['xml_converter'])
 
@@ -266,6 +275,7 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
         layout = self.layout
 
         layout.prop(self, "keep_xml")
+        layout.prop(self, "import_autosmooth")
         layout.prop(self, "import_normals")
         layout.prop(self, "import_shapekeys")
 
@@ -295,108 +305,106 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
     filename_ext = ".mesh"
 
     export_edgelists = BoolProperty(
-            name="Export edge lists",
-            description="Export edge list data for the mesh",
-            default=False,
+        name="Export edge lists",
+        description="Export edge list data for the mesh",
+        default=False,
     )
 
     export_tangents = BoolProperty(
-            name="Export tangents",
-            description="Export tangent data for the mesh",
-            default=False,
-            )
+        name="Export tangents",
+        description="Export tangent data for the mesh",
+        default=False,
+    )
     tangent_parity = BoolProperty(
-            name="   Parity in W",
-            description="Tangents have parity stored in the W component",
-            default=False,
-            )
+        name="   Parity in W",
+        description="Tangents have parity stored in the W component",
+        default=False,
+    )
 
     export_binormals = BoolProperty(
-            name="Export Binormals",
-            description="Generate binormals for the mesh",
-            default=False,
-            )
+        name="Export Binormals",
+        description="Generate binormals for the mesh",
+        default=False,
+    )
 
     export_colour = BoolProperty(
-            name="Export colour",
-            description="Export vertex colour data. Name a colour layer\
-                 'Alpha' to use as the alpha component",
-            default=False,
-            )
+        name="Export colour",
+        description="Export vertex colour data. Name a colour layer"
+                    " 'Alpha' to use as the alpha component",
+        default=False,
+    )
 
     enable_by_material = BoolProperty(
-            name="Enable By Material",
-            description="Multiple materials on a mesh will be exported as\
-                 submeshes.",
-            default=False,
-            )
+        name="Enable By Material",
+        description="Multiple materials on a mesh will be exported as"
+                    " submeshes",
+        default=False,
+    )
 
     keep_xml = BoolProperty(
-            name="Keep XML",
-            description="Keeps the XML file when converting to .MESH",
-            default=False,
-            )
+        name="Keep XML",
+        description="Keeps the XML file when converting to .MESH",
+        default=False,
+    )
 
     apply_transform = BoolProperty(
-            name="Apply Transform",
-            description="Applies object's transformation to its data",
-            default=False,
-            )
+        name="Apply Transform",
+        description="Applies object's transformation to its data",
+        default=False,
+    )
 
     apply_modifiers = BoolProperty(
-            name="Apply Modifiers",
-            description="Applies modifiers to the mesh",
-            default=False,
-            )
+        name="Apply Modifiers",
+        description="Applies modifiers to the mesh",
+        default=False,
+    )
 
     export_poses = BoolProperty(
-            name="Export shape keys",
-            description="Export shape keys as poses",
-            default=False,
-            )
+        name="Export shape keys",
+        description="Export shape keys as poses",
+        default=False,
+    )
 
     export_materials = BoolProperty(
-            name="Export materials",
-            description="Export material files.",
-            default=False,
-            )
+        name="Export materials",
+        description="Export material files",
+        default=False,
+    )
 
     overwrite_material = BoolProperty(
-            name="Overwrite material",
-            description="Overwrites existing .material file, if present.",
-            default=False,
-            )
+        name="Overwrite material",
+        description="Overwrites existing .material file, if present",
+        default=False,
+    )
 
     copy_textures = BoolProperty(
-            name="Copy textures",
-            description="Copies material source textures to material file\
-                 location",
-            default=False,
-            )
+        name="Copy textures",
+        description="Copies material source textures to material file"
+                    " location",
+        default=False,
+    )
 
     export_skeleton = BoolProperty(
-            name="Export skeleton",
-            description="Exports new skeleton and links the mesh to this new\
-                 skeleton.\nLeave off to link with existing skeleton if\
-                      applicable.",
-            default=False,
-            )
+        name="Export skeleton",
+        description="Exports new skeleton and links the mesh to this new"
+                    " skeleton.\nLeave off to link with existing skeleton"
+                    " if applicable",
+        default=False,
+    )
 
     export_animation = BoolProperty(
-            name="Export Animation",
-            description="Export all actions attached to the selected skeleton\
-                 as animations",
-            default=False,
-            )
+        name="Export Animation",
+        description="Export all actions attached to the selected skeleton"
+                    " as animations",
+        default=False,
+    )
 
     filter_glob = StringProperty(
-            default="*.mesh;*.MESH;.xml;.XML",
-            options={'HIDDEN'},
-            )
+        default="*.mesh;*.MESH;.xml;.XML",
+        options={'HIDDEN'},
+    )
 
     def invoke(self, context, event):
-        # if not self.filepath:
-        #    self.filepath = bpy.path.ensure_ext(bpy.data.filepath, ".bm")
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
@@ -405,7 +413,8 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
         from mathutils import Matrix
 
         keywords = self.as_keywords(ignore=("check_existing", "filter_glob"))
-        keywords['xml_converter'] = findConverter(config.get('OGRETOOLS_XML_CONVERTER'))
+        keywords['xml_converter'] = findConverter(
+            config.get('OGRETOOLS_XML_CONVERTER'))
 
         bpy.context.window.cursor_set("WAIT")
         result = OgreExport.save(self, context, **keywords)
@@ -449,14 +458,24 @@ def menu_func_export(self, context):
     self.layout.operator(ExportOgre.bl_idname, text="Torchlight OGRE (.mesh)")
 
 
+classes = (
+    OgreTlAddonPreferences,
+    ImportOgre,
+    ExportOgre
+)
+
+
 def register():
     logging.info('Starting io_ogre_TL %s', bl_info["version"])
-    bpy.utils.register_module(__name__)
+    for cls in classes:
+        bpy.utils.register_class(cls)
 
-    bpy.types.INFO_MT_file_import.append(menu_func_import)
-    bpy.types.INFO_MT_file_export.append(menu_func_export)
-
-    # bpy.utils.register_class(OgreTlAddonPreferences)
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
+        bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
+    else:
+        bpy.types.INFO_MT_file_import.append(menu_func_import)
+        bpy.types.INFO_MT_file_export.append(menu_func_export)
 
     # read user preferences
     config.update_from_addon_preference(bpy.context)
@@ -464,12 +483,15 @@ def register():
 
 def unregister():
     logging.info('Unloading io_ogre_TL %s', bl_info["version"])
-    bpy.utils.unregister_module(__name__)
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
 
-    bpy.types.INFO_MT_file_import.remove(menu_func_import)
-    bpy.types.INFO_MT_file_export.remove(menu_func_export)
-
-    # bpy.utils.unregister_class(OgreTlAddonPreferences)
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
+        bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
+    else:
+        bpy.types.INFO_MT_file_import.remove(menu_func_import)
+        bpy.types.INFO_MT_file_export.remove(menu_func_export)
 
 
 if __name__ == "__main__":
