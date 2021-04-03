@@ -1,119 +1,12 @@
-#!BPY
-
-"""
-Name: 'OGRE for Torchlight 2 (*.MESH)'
-Blender: 2.63a, 2.77a, 2.79
-Group: 'Import/Export'
-Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
-
-Author: Rob James,
-Original Author: Dusho
-
-There were some great updates added to a forked version of this script
-for a game called Kenshi by "someone".
-I'm attempting to put the relevent changes into the plugin to improve
-Torchlight editing.
-
-Thanks goes to 'goatman' for his port of Ogre export script from 2.49b to 2.5x,
-and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
-
-"""
-
-__author__ = "Rob James"
-__version__ = "0.8.18 02-Feb-2020"
-
-__bpydoc__ = """\
-This script imports/exports Torchlight Ogre models into/from Blender.
-
-Supported:<br>
-    * import/export of basic meshes
-    * import/export of skeleton
-    * import/export of animations
-    * import/export of vertex weights (ability to import characters and
-      adjust rigs)
-    * import/export of vertex colour (RGB)
-    * import/export of vertex alpha (Uses second vertex colour
-      layer called Alpha)
-    * import/export of shape keys
-    * Calculation of tangents and binormals for export
-    * Toggle of edge lists during export
-
-Known issues:<br>
-    * imported materials will lose certain informations not applicable to
-      Blender when exported
-
-History:<br>
-    * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded to 0
-             and removed.
-    * v0.8.17  (17-Jan-2020)- Updated user settings panel to be more
-             configurable. Added toggle for edge lists.
-    * v0.8.16  (15-Oct-2019) - Fixed exporting vertex colour + vertex alpha
-             From Kenshi add on
-    * v0.8.15  (17-Jul-2019) - Added option to import normals
-             From Kenshi add on
-    * v0.8.14  (14-May-2019) - Fixed blender deleting zero length bones
-             From Kenshi add on
-    * v0.8.13  (19-Mar-2019) - Exporting material files is optional
-             From Kenshi add on
-    * v0.8.12  (14-Mar-2019) - Fixed error exporting animation scale keyframes
-             From Kenshi add on
-    * v0.8.11  (26-Feb-2019) - Fixed tangents and binormals for mirrorred uvs
-             From Kenshi add on
-    * v0.8.10  (32-Jan-2019) - Fixed export when mesh has multiple uv sets
-             From Kenshi add on
-    * v0.8.9   (08-Mar-2018) - Added import option to match weight maps and
-             link with a previously imported skeleton
-             From Kenshi add on
-    * v0.8.8   (26-feb-2018) - Fixed export triangulation and custom normals
-             From Kenshi add on
-    * v0.8.7   (01-Feb-2018) - Scene frame rate adjusted on import,
-             Fixed quatenion normalisation. From Kenshi add on
-    * v0.8.6   (31-Jan-2018) - Fixed crash exporting animations in
-             blender 2.79 From Kenshi add on
-    * v0.8.5   (02-Jan-2018) - Optimisation: Use hashmap for duplicate
-             vertex detection From Kenshi add on
-    * v0.8.4   (20-Nov-2017) - Fixed animation quaternion interpolation
-             From Kenshi addon
-    * v0.8.3   (06-Nov-2017) - Warning when linked skeleton file not found
-             From Kenshi addon
-    * v0.8.2   (25-Sep-2017) - Fixed bone translations in animations
-             From Kenshi addon
-    * v0.8.1   (28-Jul-2017) - Added alpha component to vertex colour
-             From Kenshi addon
-    * v0.8.0   (30-Jun-2017) - Added animation and shape key support.
-             Rewritten skeleton export. From Kenshi addon
-    * v0.7.2   (08-Dec-2016) - fixed divide by 0 error calculating tangents.
-             From Kenshi addon
-    * v0.7.1   (07-Sep-2016) - bug fixes. From Kenshi addon
-    * v0.7.0   (02-Sep-2016) - Persistant Ogre bone IDs, Export vertex colours.
-             Generates tangents and binormals. From Kenshi addon
-    * v0.6.5   (09-May-2017) - BUGFIX: Mesh with no bone assignment would
-             not export.
-    * v0.6.4   (25-Mar-2017) - BUGFIX: By material was breaking armor sets
-    * v0.6.3   (01-Jan-2017) - I'm not Dusho, but I added ability to export
-             multiple materials and textures on a single mesh.
-    * v0.6.2   (09-Mar-2013) - bug fixes (working with materials+textures),
-             added 'Apply modifiers' and 'Copy textures'
-    * v0.6.1   (27-Sep-2012) - updated to work with Blender 2.63a
-    * v0.6     (01-Sep-2012) - added skeleton import + vertex weights
-             import/export
-    * v0.5     (06-Mar-2012) - added material import/export
-    * v0.4.1   (29-Feb-2012) - flag for applying transformation, default=true
-    * v0.4     (28-Feb-2012) - fixing export when no UV data are present
-    * v0.3     (22-Feb-2012) - WIP - started cleaning + using OgreXMLConverter
-    * v0.2     (19-Feb-2012) - WIP - working export of geometry and faces
-    * v0.1     (18-Feb-2012) - initial 2.59 import code (from .xml)
-    * v0.0     (12-Feb-2012) - file created
-"""
-
-# from Blender import *
 from xml.dom import minidom
 import bpy
+import operator
 from mathutils import Vector, Matrix
 import math
 import os
 import subprocess
 import shutil
+from functools import reduce
 
 SHOW_EXPORT_DUMPS = False
 SHOW_EXPORT_TRACE = False
@@ -125,6 +18,38 @@ blender_version = 259
 
 def hash_combine(x, y):
     return x ^ y + 0x9e3779b9 + (x << 6) + (x >> 2)
+
+
+def getIsHidden(obj):
+    if hasattr(obj, "hide_viewport"):
+        return obj.hide_viewport  # 2.8
+    else:
+        return obj.hide
+
+
+def setIsHidden(obj, isHidden):
+    if hasattr(obj, "hide_viewport"):
+        obj.hide_viewport = isHidden
+    else:
+        obj.hide = isHidden
+
+
+def toMesh(obj, applyModifiers):
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):  # 2.8
+        if applyModifiers:
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+            return obj.evaluated_get(depsgraph).to_mesh()
+        else:
+            return obj.to_mesh()
+    else:  # Legacy
+        return obj.to_mesh(bpy.context.scene, applyModifiers, 'PREVIEW')
+
+
+def getUVTextures(mesh):
+    if hasattr(mesh, "uv_textures"):  # legacy
+        return mesh.uv_textures
+    else:
+        return mesh.uv_layers
 
 
 class VertexInfo(object):
@@ -155,6 +80,7 @@ class VertexInfo(object):
 
     '''does not compare ogre_vidx (and position at the moment)
       [ no need to compare position ]'''
+
     def __eq__(self, o):
         if self.nx != o.nx or self.ny != o.ny or self.nz != o.nz:
             return False
@@ -198,13 +124,14 @@ class Skeleton(object):
         self.armature = ob.find_armature()
         self.name = self.armature.name
         self.ids = {}
-        self.hidden = self.armature.hide
+        self.hidden = getIsHidden(self.armature)
         data = self.armature.data
-        self.armature.hide = False
+        setIsHidden(self.armature, False)
 
         # get ogre bone ids - need to be in edit mode to access edit_bones
-        prev = bpy.context.scene.objects.active
-        bpy.context.scene.objects.active = self.armature
+        # prev = bpy.context.scene.objects.active
+        prev = bpy.context.object
+        setActiveObject(bpy.context, self.armature)
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         bpy.ops.object.mode_set(mode='EDIT', toggle=False)
         for bone in data.edit_bones:
@@ -212,8 +139,8 @@ class Skeleton(object):
                 self.ids[bone.name] = bone['OGREID']
 
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
-        bpy.context.scene.objects.active = prev
-        self.armature.hide = self.hidden
+        setActiveObject(bpy.context, prev)
+        setIsHidden(self.armature, self.hidden)
 
         # Allocate bone ids
         index = 0
@@ -233,15 +160,15 @@ class Skeleton(object):
         # calculate bone rest matrices
         rot = Matrix.Rotation(-1.5707963, 4, 'X')  # Rotate to y-up coordinates
         fix = Matrix.Rotation(1.5707963, 4, 'Z')   # Fix bone axis
-        fix *= Matrix.Rotation(3.141592653, 4, 'X')
+        fix = matmul([fix, Matrix.Rotation(3.141592653, 4, 'X')])
         self.rest = [None] * len(self.bones)
         for i, bone in enumerate(self.bones):
             if bone.parent:
-                self.rest[i] = (bone.parent.matrix_local *
-                                fix * rot).inverted()\
-                                     * bone.matrix_local * fix * rot
+                self.rest[i] = matmul([matmul([bone.parent.matrix_local,
+                                      fix, rot]).inverted(),
+                                      bone.matrix_local, fix, rot])
             else:
-                self.rest[i] = rot * bone.matrix_local * fix * rot
+                self.rest[i] = matmul([rot, bone.matrix_local, fix, rot])
 
             # Change bones list to local structure, due to blender bone
             # structures being cleared if you switch to edit mode again
@@ -299,6 +226,13 @@ class Skeleton(object):
 #########################################
 
 
+def matmul(matracies):
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        return reduce((lambda x, y: operator.matmul(x, y)), matracies)
+    else:
+        return reduce((lambda x, y: x * y), matracies)
+
+
 def bCollectAnimationData(meshData):
     if 'skeleton' not in meshData:
         return
@@ -351,22 +285,23 @@ def collectAnimationData(armature, frame_range, fps, step=1):
 
     # Get base matrices
     mat = {}
-    hidden = armature.hide
-    armature.hide = False
-    prev = bpy.context.scene.objects.active
-    bpy.context.scene.objects.active = armature
+    hidden = getIsHidden(armature)
+    setIsHidden(armature, False)
+    # prev = bpy.context.scene.objects.active
+    prev = bpy.context.object
+    setActiveObject(bpy.context, armature)
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
     bpy.ops.object.mode_set(mode='EDIT', toggle=False)
     for b in armature.data.edit_bones:
         if b.parent:
-            mat[b.name] = fix2 * \
-             b.parent.matrix.to_3x3().transposed() * \
-             b.matrix.to_3x3()
+            mat[b.name] = matmul([fix2,
+                                  b.parent.matrix.to_3x3().transposed(),
+                                  b.matrix.to_3x3()])
         else:
-            mat[b.name] = fix1 * b.matrix.to_3x3()
+            mat[b.name] = matmul([fix1, b.matrix.to_3x3()])
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
-    bpy.context.scene.objects.active = prev
-    armature.hide = hidden
+    setActiveObject(bpy.context, prev)
+    setIsHidden(armature, hidden)
 
     # Collect data
     for frame in range(int(start), int(end)+1, step):
@@ -378,10 +313,14 @@ def collectAnimationData(armature, frame_range, fps, step=1):
             scl = bone.scale
 
             # transform transation into parent coordinates
-            loc = mat[bone.name] * loc
+            if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+                loc = mat[bone.name] @ loc
+            else:
+                loc = mat[bone.name] * loc
 
             keyframes[bone.name][0].append((time, (loc[0], loc[1], loc[2])))
-            keyframes[bone.name][1].append((time, (rot[0], rot[1], rot[2], rot[3])))
+            keyframes[bone.name][1].append(
+                (time, (rot[0], rot[1], rot[2], rot[3])))
             keyframes[bone.name][2].append((time, (scl[0], scl[1], scl[2])))
 
     # Remove unnessesary tracks
@@ -450,8 +389,10 @@ def xSaveAnimation(animation, xDoc, xAnimations):
             if data[1]:
                 rot = data[1][frame][1]
                 angle = math.acos(rot[0]) * 2
-                l = math.sqrt(rot[1]*rot[1] + rot[2]*rot[2] + rot[3]*rot[3])
-                axis = (1, 0, 0) if l == 0 else (rot[1]/l, rot[2]/l, rot[3]/l)
+                length = math.sqrt(rot[1]*rot[1] + rot[2]*rot[2]
+                                   + rot[3]*rot[3])
+                axis = (1, 0, 0) if length == 0 \
+                    else (rot[1]/length, rot[2]/length, rot[3]/length)
 
                 rotate = xDoc.createElement('rotate')
                 raxis = xDoc.createElement('axis')
@@ -471,6 +412,15 @@ def xSaveAnimation(animation, xDoc, xAnimations):
                 keyframe.appendChild(scale)
 
 
+# borrowed from here:
+# https://theduckcow.com/2019/update-addons-both-blender-28-and-27-support/
+def setActiveObject(context, obj):
+    if hasattr(context, "view_layer"):
+        # 2.8
+        context.view_layer.objects.active = obj
+    else:
+        # 2.7
+        context.scene.objects.active = obj
 #########################################
 
 
@@ -479,7 +429,7 @@ def fileExist(filepath):
         filein = open(filepath)
         filein.close()
         return True
-    except:
+    except Exception:
         print("No file: ", filepath)
         return False
 
@@ -541,7 +491,8 @@ def xSaveGeometry(geometry, xDoc, xMesh):
         xVertexBuffer.setAttribute("normals", "true")
     if isTexCoordsSets:
         xVertexBuffer.setAttribute("texture_coord_dimensions_0", "2")
-        xVertexBuffer.setAttribute("texture_coords", "1") #str(texCoordSets)) # Only export one set
+        # str(texCoordSets)) # Only export one set
+        xVertexBuffer.setAttribute("texture_coords", "1")
 
     if isColours:
         xVertexBuffer.setAttribute("colours_diffuse", "true")
@@ -632,17 +583,19 @@ def xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry=False):
         # boneassignments
         if 'skeleton' in meshData:
             skeleton = meshData['skeleton']
-            # xBoneAssignments = xGetBoneAssignments(meshData, xDoc,
-            #  submesh['geometry']['boneassignments'])
             xBoneAssignments = xDoc.createElement("boneassignments")
-            for vxIdx, vxBoneAsg in enumerate(submesh['geometry']['boneassignments']):
+            for vxIdx, vxBoneAsg in enumerate(
+                    submesh['geometry']['boneassignments']):
                 for boneAndWeight in vxBoneAsg:
                     boneName = boneAndWeight[0]
                     boneWeight = boneAndWeight[1]
-                    xVxBoneassignment = xDoc.createElement("vertexboneassignment")
+                    xVxBoneassignment = xDoc.createElement(
+                        "vertexboneassignment")
                     xVxBoneassignment.setAttribute("vertexindex", str(vxIdx))
-                    xVxBoneassignment.setAttribute("boneindex", str(skeleton.bone_id(boneName)))
-                    xVxBoneassignment.setAttribute("weight", '%6f' % boneWeight)
+                    xVxBoneassignment.setAttribute(
+                        "boneindex", str(skeleton.bone_id(boneName)))
+                    xVxBoneassignment.setAttribute(
+                        "weight", '%6f' % boneWeight)
                     xBoneAssignments.appendChild(xVxBoneassignment)
             xSubMesh.appendChild(xBoneAssignments)
 
@@ -724,7 +677,6 @@ def xSaveMeshData(meshData, filepath, export_skeleton):
             nameDotMeshDotXml = os.path.split(filepath)[1].lower()
             nameDotMesh = os.path.splitext(nameDotMeshDotXml)[0]
             linkSkeletonName = os.path.splitext(nameDotMesh)[0]
-        # xSkeletonlink.setAttribute("name", meshData['skeleton']['name']+".skeleton")
         xSkeletonlink.setAttribute("name", linkSkeletonName+".skeleton")
         xMesh.appendChild(xSkeletonlink)
 
@@ -750,7 +702,8 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
     print("material file: %s" % matFile)
     isMaterial = os.path.isfile(matFile)
 
-    # if is no material file, or we are forced to overwrite it, write the material file
+    # if is no material file, or we are forced to overwrite it,
+    # write the material file
     if isMaterial is False or overwriteMaterialFlag is True:
         # write material
         fileWr = open(matFile, 'w')
@@ -761,15 +714,25 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
             fileWr.write(indent(2) + "pass\n" + indent(2) + "{\n")
 
             # write material content here
-            fileWr.write(indent(3) + "ambient %f %f %f\n" % (matInfo['ambient'][0], matInfo['ambient'][1], matInfo['ambient'][2]))
-            fileWr.write(indent(3) + "diffuse %f %f %f\n" % (matInfo['diffuse'][0], matInfo['diffuse'][1], matInfo['diffuse'][2]))
-            fileWr.write(indent(3) + "specular %f %f %f 0\n" % (matInfo['specular'][0], matInfo['specular'][1], matInfo['specular'][2]))
-            fileWr.write(indent(3) + "emissive %f %f %f\n" % (matInfo['emissive'][0], matInfo['emissive'][1], matInfo['emissive'][2]))
+            fileWr.write(indent(3) + "ambient %f %f %f\n" %
+                         (matInfo['ambient'][0], matInfo['ambient'][1],
+                             matInfo['ambient'][2]))
+            fileWr.write(indent(3) + "diffuse %f %f %f\n" %
+                         (matInfo['diffuse'][0], matInfo['diffuse'][1],
+                             matInfo['diffuse'][2]))
+            fileWr.write(indent(3) + "specular %f %f %f 0\n" %
+                         (matInfo['specular'][0], matInfo['specular'][1],
+                             matInfo['specular'][2]))
+            fileWr.write(indent(3) + "emissive %f %f %f\n" %
+                         (matInfo['emissive'][0], matInfo['emissive'][1],
+                             matInfo['emissive'][2]))
 
             if 'textures' in matInfo:
                 for texInfo in matInfo['textures']:
-                    fileWr.write(indent(3) + "texture_unit\n" + indent(3) + "{\n")
-                    fileWr.write(indent(4) + "texture %s\n" % texInfo['texture'])
+                    fileWr.write(indent(3) + "texture_unit\n" +
+                                 indent(3) + "{\n")
+                    fileWr.write(indent(4) + "texture %s\n" %
+                                 texInfo['texture'])
                     fileWr.write(indent(3) + "}\n")  # texture unit
 
             fileWr.write(indent(2) + "}\n")  # pass
@@ -787,18 +750,23 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
                         srcTextureFile = texInfo['texture_path']
                         baseDirName = os.path.dirname(bpy.data.filepath)
                         if srcTextureFile[0:2] == "//":
-                            print("Converting relative image name \"%s\"" % srcTextureFile)
-                            srcTextureFile = os.path.join(baseDirName, srcTextureFile[2:])
+                            print("Converting relative image name \"%s\"" %
+                                  srcTextureFile)
+                            srcTextureFile = os.path.join(
+                                baseDirName, srcTextureFile[2:])
                         if fileExist(srcTextureFile):
                             # copy texture to dir
                             print("Copying texture \"%s\"" % srcTextureFile)
                             try:
                                 print(" to \"%s\"" % os.path.dirname(matFile))
-                                shutil.copy(srcTextureFile, os.path.dirname(matFile))
-                            except:
+                                shutil.copy(srcTextureFile,
+                                            os.path.dirname(matFile))
+                            except Exception:
                                 print("Error copying \"%s\"" % srcTextureFile)
                         else:
-                            print("Can't copy texture \"%s\" because file does not exists!" % srcTextureFile)
+                            print(
+                                "Can't copy texture \"%s\" because file does "
+                                "not exists!" % srcTextureFile)
 
 
 def getVertexIndex(vertexInfo, vertexList):
@@ -840,7 +808,12 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
             _sm_verts_.append([])
 
         # mesh = bpy.types.Mesh ##
-        mesh = ob.to_mesh(bpy.context.scene, applyModifiers, 'PREVIEW')
+        if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+            tobj = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())\
+                if applyModifiers else ob
+            mesh = tobj.to_mesh()
+        else:
+            mesh = toMesh(ob, applyModifiers)
 
         # use bmesh to triangulate
         bm = bmesh.new()
@@ -890,7 +863,8 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
             tris.append((face.vertices[0], face.vertices[1], face.vertices[2]))
 
             if len(face.vertices) >= 4:
-                tris.append((face.vertices[0], face.vertices[2], face.vertices[3]))
+                tris.append(
+                    (face.vertices[0], face.vertices[2], face.vertices[3]))
 
             # Progress
             percent = fidx * progressScale
@@ -915,8 +889,11 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
                 r, g, b = colourData[loop].color if colourData else (1, 1, 1)
                 a = alphaData[loop].color[0] if alphaData else 1
 
-                tangent = mesh.loops[loop].tangent[:] + (mesh.loops[loop].bitangent_sign,) if exportTangents else None
-                binormal = mesh.loops[loop].bitangent * -1 if exportBinormals else None
+                tangent = mesh.loops[loop].tangent[:] + \
+                    (mesh.loops[loop].bitangent_sign,
+                     ) if exportTangents else None
+                binormal = mesh.loops[loop].bitangent * - \
+                    1 if exportBinormals else None
 
                 # vertex groups
                 boneWeights = {}
@@ -999,7 +976,7 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
         subMeshData['geometry'] = {}
         subMeshData['geometry']['positions'] = positions
         subMeshData['geometry']['normals'] = normals
-        subMeshData['geometry']['texcoordsets'] = len(mesh.uv_textures)
+        subMeshData['geometry']['texcoordsets'] = len(getUVTextures(mesh))
 
         if uvData:
             subMeshData['geometry']['uvsets'] = uvTex
@@ -1037,7 +1014,12 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
             if m:
                 materialName = m.name
         # mesh = bpy.types.Mesh ##
-        mesh = ob.to_mesh(bpy.context.scene, applyModifiers, 'PREVIEW')
+        if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+            tobj = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())\
+                if applyModifiers else ob
+            mesh = tobj.to_mesh()
+        else:
+            mesh = toMesh(ob, applyModifiers)
 
         # use bmesh to triangulate
         bm = bmesh.new()
@@ -1116,8 +1098,11 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
                 r, g, b = colourData[loop].color if colourData else (1, 1, 1)
                 a = alphaData[loop].color[0] if alphaData else 1
 
-                tangent = mesh.loops[loop].tangent[:] + (mesh.loops[loop].bitangent_sign,) if exportTangents else None
-                binormal = mesh.loops[loop].bitangent * -1 if exportBinormals else None
+                tangent = mesh.loops[loop].tangent[:] + \
+                    (mesh.loops[loop].bitangent_sign,
+                     ) if exportTangents else None
+                binormal = mesh.loops[loop].bitangent * - \
+                    1 if exportBinormals else None
 
                 # vertex groups
                 boneWeights = {}
@@ -1207,9 +1192,9 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
 
         geometry['positions'] = positions
         geometry['normals'] = normals
-        geometry['texcoordsets'] = len(mesh.uv_textures)
+        geometry['texcoordsets'] = len(getUVTextures(mesh))
         if SHOW_EXPORT_TRACE:
-            print("texcoordsets: " + str(len(mesh.uv_textures)))
+            print("texcoordsets: " + str(len(getUVTextures(mesh))))
         if uvData:
             geometry['uvsets'] = uvTex
         if colourData or alphaData:
@@ -1255,6 +1240,74 @@ def bCollectSkeletonData(blenderMeshData, selectedObjects):
 
 
 def bCollectMaterialData(blenderMeshData, selectedObjects):
+    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        # 2.8
+        bCollectMaterialDataTwoEight(blenderMeshData, selectedObjects)
+    else:
+        # Legacy
+        bCollectMaterialDataLegacy(blenderMeshData, selectedObjects)
+
+
+def bCollectMaterialDataTwoEight(blenderMeshData, selectedObjects):
+    allMaterials = {}
+    blenderMeshData['materials'] = allMaterials
+
+    for ob in selectedObjects:
+        if ob.type == 'MESH' and len(ob.data.materials) > 0:
+            for mat in ob.data.materials:
+                # mat = bpy.types.Material ##
+                if mat and mat.name not in allMaterials:
+                    matInfo = {}
+                    bsdf = mat.node_tree.nodes.get('Principled BSDF')
+                    assert(bsdf)
+                    allMaterials[mat.name] = matInfo
+
+                    # ambient  - none in eevee
+                    # TL2 Default values
+                    matInfo['ambient'] = [0.588, 0.588, 0.588]
+                    # diffuse
+                    matInfo['diffuse'] = [bsdf.inputs['Base Color']
+                                          .default_value[0],
+                                          bsdf.inputs['Base Color']
+                                          .default_value[1],
+                                          bsdf.inputs['Base Color']
+                                          .default_value[2]]
+                    # specular
+                    # TL2 Default values
+                    matInfo['specular'] = [0, 0, 0]
+
+                    # emissive
+                    emissionR = mat.node_tree.nodes.get('EmissionR', None)
+                    emissionG = mat.node_tree.nodes.get('EmissionG', None)
+                    emissionB = mat.node_tree.nodes.get('EmissionB', None)
+                    if emissionR is not None\
+                        and emissionG is not None\
+                            and emissionB is not None:
+                        # Node setup created during import
+                        matInfo['emissive'] = [
+                            emissionR.inputs['Strength'].default_value,
+                            emissionG.inputs['Strength'].default_value,
+                            emissionB.inputs['Strength'].default_value
+                        ]
+                    else:
+                        # TL2 Default values
+                        matInfo['emissive'] = [0.4, 0.4, 0.4]
+
+                    # texture
+                    textures = [x for x in mat.node_tree.nodes
+                                if x.bl_idname == 'ShaderNodeTexImage']
+                    if len(textures) > 0:
+                        matInfo['textures'] = []
+                        for texImage in textures:
+                            if texImage and texImage.image:
+                                texInfo = {}
+                                texInfo['texture'] = texImage.image.name
+                                texInfo['texture_path'] = \
+                                    texImage.image.filepath
+                                matInfo['textures'].append(texInfo)
+
+
+def bCollectMaterialDataLegacy(blenderMeshData, selectedObjects):
     allMaterials = {}
     blenderMeshData['materials'] = allMaterials
 
@@ -1283,15 +1336,17 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                     if len(mat.texture_slots) > 0:
                         matInfo['textures'] = []
                         for slot in mat.texture_slots:
-                            if slot and slot.texture.type == 'IMAGE' and slot.texture.image:
+                            if slot and slot.texture.type == 'IMAGE' and \
+                                    slot.texture.image:
                                 texInfo = {}
                                 texInfo['texture'] = slot.texture.image.name
-                                texInfo['texture_path'] = slot.texture.image.filepath
+                                texInfo['texture_path'] = \
+                                    slot.texture.image.filepath
                                 matInfo['textures'].append(texInfo)
 
 
 def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
-                     export_skeleton, keep_xml, export_edgelists):
+                     export_skeleton, keep_xml, export_edgelists=False):
 
     if ogreXMLconverter is None:
         return False
@@ -1312,16 +1367,29 @@ def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
             # for skeleton
             skelFile = os.path.splitext(filepath)[0]  # removing .mesh
             xmlFilepath = skelFile + ".skeleton.xml"
-            subprocess.call([ogreXMLconverter, xmlFilepath])
+            if export_edgelists:
+                subprocess.call([ogreXMLconverter, xmlFilepath])
+            else:
+                subprocess.call([ogreXMLconverter, "-e", xmlFilepath])
+
             # remove XML file
             if keep_xml is False:
                 os.unlink("%s" % xmlFilepath)
 
         return True
 
-    except:
+    except Exception:
         print("Error: Could not run", ogreXMLconverter)
         return False
+
+
+# borrowed from here:
+# https://theduckcow.com/2019/update-addons-both-blender-28-and-27-support/
+def select_get(object):
+    if hasattr(object, "select_get"):
+        return object.select_get()
+    else:
+        return object.select
 
 
 def save(operator, context, filepath,
@@ -1358,12 +1426,12 @@ def save(operator, context, filepath,
     selectedObjects = []
     scn = bpy.context.scene
     for ob in scn.objects:
-        if ob.select is True and ob.type != 'ARMATURE':
+        if select_get(ob) is True and ob.type != 'ARMATURE':
             selectedObjects.append(ob)
 
     if len(selectedObjects) == 0:
         print("No objects selected for export.")
-        operator.report( {'WARNING'}, "No objects selected for export")
+        operator.report({'WARNING'}, "No objects selected for export")
         return ('CANCELLED')
 
     # go to the object mode
