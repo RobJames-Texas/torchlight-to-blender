@@ -398,7 +398,7 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
         items=(
             ('OGREID', "By Imported OGREID",
              "Sort by the OGREID property that was added during import."),
-            ('ALPHA', "By ALPHA", "(Torchlight Default) Sort by the alpha-numeric name of the bones."),
+            ('ALPHA', "By Bone Name", "(Torchlight Default) Sort by the alpha-numeric name of the bones."),
         ),
         default='ALPHA'
     )
