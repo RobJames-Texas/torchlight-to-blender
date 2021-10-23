@@ -120,7 +120,7 @@ class Bone(object):
 
 
 class Skeleton(object):
-    def __init__(self, ob):
+    def __init__(self, ob, sort):
         self.armature = ob.find_armature()
         self.name = self.armature.name
         self.ids = {}
@@ -146,16 +146,26 @@ class Skeleton(object):
         index = 0
         missing = []
         self.bones = [None] * len(data.bones)
-        for bone in data.bones:
-            if bone.name in self.ids:
-                self.bones[self.ids[bone.name]] = bone
-            else:
-                missing.append(bone)
-        for bone in missing:
-            while self.bones[index]:
-                index += 1
-            self.bones[index] = bone
-            self.ids[bone.name] = index
+
+        if sort == 'ALPHA':
+            them_bones = sorted(data.bones, key=lambda x: x.name)
+            #them_bones.sort(key=lambda x: x.name)
+            for i, bone in enumerate(them_bones):
+                self.bones[i] = bone
+                self.ids[bone.name] = i
+                print(i, bone.name)
+
+        else:
+            for bone in data.bones:
+                if bone.name in self.ids:
+                    self.bones[self.ids[bone.name]] = bone
+                else:
+                    missing.append(bone)
+            for bone in missing:
+                while self.bones[index]:
+                    index += 1
+                self.bones[index] = bone
+                self.ids[bone.name] = index
 
         # calculate bone rest matrices
         rot = Matrix.Rotation(-1.5707963, 4, 'X')  # Rotate to y-up coordinates
@@ -273,7 +283,6 @@ def bCollectAnimationData(meshData):
 
 
 def collectAnimationData(armature, frame_range, fps, step=1):
-    scene = bpy.context.scene
     start, end = frame_range
 
     keyframes = {}
@@ -661,7 +670,7 @@ def xSaveMeshData(meshData, filepath, export_skeleton):
 
     if hasSharedGeometry:
         geometry = meshData['sharedgeometry']
-        xSaveGeometry(geometry, xDoc, xMesh, hasSharedGeometry)
+        xSaveGeometry(geometry, xDoc, xMesh)
 
     xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry)
 
@@ -856,7 +865,6 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
         progressScale = 1.0 / (len(mesh.polygons) - 1)
 
         for fidx, face in enumerate(mesh.polygons):
-            smooth = face.use_smooth
             faces = _sm_faces_[face.material_index]
             # Ogre only supports triangles
             tris = []
@@ -1227,14 +1235,14 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
     return meshData
 
 
-def bCollectSkeletonData(blenderMeshData, selectedObjects):
+def bCollectSkeletonData(blenderMeshData, selectedObjects, sort):
     if SHOW_EXPORT_TRACE:
         print("bpy.data.armatures = %s" % bpy.data.armatures)
 
     # TODO: for now just take armature of first selected object
     if selectedObjects[0].find_armature():
         # creates and parses blender skeleton
-        skeleton = Skeleton(selectedObjects[0])
+        skeleton = Skeleton(selectedObjects[0], sort)
 
         blenderMeshData['skeleton'] = skeleton
 
@@ -1409,6 +1417,7 @@ def save(operator, context, filepath,
          enable_by_material=False,
          export_poses=False,
          export_animation=False,
+         export_bonesort='ALPHA'
          ):
 
     global blender_version
@@ -1446,7 +1455,7 @@ def save(operator, context, filepath,
     blenderMeshData = {}
 
     # skeleton
-    bCollectSkeletonData(blenderMeshData, selectedObjects)
+    bCollectSkeletonData(blenderMeshData, selectedObjects, export_bonesort)
 
     # mesh
     # TODO: Turn this into a factory pattern. Need to follow DRY.

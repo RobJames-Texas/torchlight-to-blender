@@ -51,7 +51,7 @@ from bpy.props import (BoolProperty,
 import logging
 import bpy
 __author__ = "Rob James"
-__version__ = "0.9.00 03-Apr-2021"
+__version__ = "0.9.01 23-Oct-2021"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -74,6 +74,7 @@ Known issues:<br>
       to Blender when exported
 
 History:<br>
+    * v0.9.01  (23-Oct-2021)- Allow bones to be exported in alphabetical order.
     * v0.9.00  (03-Apr-2021)- Initial support for Blender 2.8 and up
     * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded
              to 0 and removed.
@@ -287,7 +288,6 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
 
         layout.prop(self, "import_animations")
 
-        row = layout.row(align=True)
         rate = layout.column()
         rate.enabled = self.import_animations
         rate.prop(self, "round_frames")
@@ -392,6 +392,17 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
         default=False,
     )
 
+    export_bonesort = EnumProperty(
+        name="Sorting",
+        description="Choose the sorting method to use for the bones",
+        items=(
+            ('OGREID', "By Imported OGREID",
+             "Sort by the OGREID property that was added during import."),
+            ('ALPHA', "By ALPHA", "(Torchlight Default) Sort by the alpha-numeric name of the bones."),
+        ),
+        default='ALPHA'
+    )
+
     export_animation = BoolProperty(
         name="Export Animation",
         description="Export all actions attached to the selected skeleton"
@@ -446,6 +457,7 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
         skeleton = layout.box()
         skeleton.prop(self, "export_skeleton")
         skeleton.prop(self, "export_animation")
+        skeleton.prop(self, "export_bonesort")
 
 ###############################################################################
 
