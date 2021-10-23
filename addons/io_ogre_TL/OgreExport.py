@@ -149,7 +149,6 @@ class Skeleton(object):
 
         if sort == 'ALPHA':
             them_bones = sorted(data.bones, key=lambda x: x.name)
-            #them_bones.sort(key=lambda x: x.name)
             for i, bone in enumerate(them_bones):
                 self.bones[i] = bone
                 self.ids[bone.name] = i
