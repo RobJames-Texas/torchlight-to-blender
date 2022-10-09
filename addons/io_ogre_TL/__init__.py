@@ -20,7 +20,7 @@
 
 """
 Name: 'OGRE for Torchlight 2(*.MESH)'
-Blender: 2.63a, 2.77a, 2.79, 2.8+
+Blender: 2.63a, 2.77a, 2.79, 2.8x
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
 
@@ -51,7 +51,7 @@ from bpy.props import (BoolProperty,
 import logging
 import bpy
 __author__ = "Rob James"
-__version__ = "0.9.01 23-Oct-2021"
+__version__ = "0.9.02 09-Oct-2022"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -74,6 +74,7 @@ Known issues:<br>
       to Blender when exported
 
 History:<br>
+    * v0.9.02  (09-Oct-2022)- Fix for animations not being imported in Blender 2.8.
     * v0.9.01  (23-Oct-2021)- Allow bones to be exported in alphabetical order.
     * v0.9.00  (03-Apr-2021)- Initial support for Blender 2.8 and up
     * v0.8.18  (02-Feb-2020)- Fix for very small bone lengths being rounded
@@ -141,7 +142,7 @@ bl_info = {
     "name": "Torchlight 2 MESH format",
     "author": "Rob James",
     "blender": (2, 80, 0),
-    "version": (0, 9, 0),
+    "version": (0, 9, 2),
     "api": 35622,
     "location": "File > Import-Export",
     "description": ("Import-Export Torchlight 2 Model, Import MESH, UV's, "

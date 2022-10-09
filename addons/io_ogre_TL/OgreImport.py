@@ -748,16 +748,19 @@ def bCreateAnimations(meshData):
                 m = mat[target].transposed()
                 for i in range(0, len(data[0])):
                     v = Vector(data[0][i][1])
-                    data[0][i][1] = m * v
+                    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+                        data[0][i][1] = m @ v
+                    else:
+                        data[0][i][1] = m * v
 
                 # create fcurves
                 for i in range(3):
                     if data[i]:
                         path = bone.path_from_id(path_id[i])
                         for channel in range(len(data[i][0][1])):
-                            curve = action.fcurves.new(path,
-                                                       channel,
-                                                       bone.name)
+                            curve = action.fcurves.new(data_path=path,
+                                                       index=channel,
+                                                       action_group=bone.name)
                             for key in data[i]:
                                 curve.keyframe_points.insert(key[0],
                                                              key[1][channel])
