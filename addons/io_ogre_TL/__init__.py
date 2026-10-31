@@ -20,7 +20,7 @@
 
 """
 Name: 'OGRE for Torchlight 2(*.MESH)'
-Blender: 2.63a, 2.77a, 2.79, 2.8x
+Blender: 4.2
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
 
@@ -37,21 +37,22 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 
 """
 
+import sys
+import logging
+import bpy
 from . import config
 from bpy_extras.io_utils import (ExportHelper,
                                  ImportHelper,
-                                 path_reference_mode,
-                                 axis_conversion,
                                  )
 from bpy.props import (BoolProperty,
-                       FloatProperty,
                        StringProperty,
                        EnumProperty,
                        )
-import logging
-import bpy
+from typing import BoolProperty, EnumProperty, StringProperty
+
 __author__ = "Rob James"
-__version__ = "0.9.02 09-Oct-2022"
+__version__ = "0.9.03 2026-07-03"
+__WIKI_URL__ = "https://github.com/RobJames-Texas/torchlight-to-blender"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -74,6 +75,7 @@ Known issues:<br>
       to Blender when exported
 
 History:<br>
+    * v0.9.03  (03-Jul-2026)- Work to support Blender 4.2, and some other minor fixes.
     * v0.9.02  (09-Oct-2022)- Fix for animations not being imported in Blender 2.8.
     * v0.9.01  (23-Oct-2021)- Allow bones to be exported in alphabetical order.
     * v0.9.00  (03-Apr-2021)- Initial support for Blender 2.8 and up
@@ -138,29 +140,19 @@ History:<br>
     * v0.0     (12-Feb-2012) - file created
 """
 
-bl_info = {
-    "name": "Torchlight 2 MESH format",
-    "author": "Rob James",
-    "blender": (2, 80, 0),
-    "version": (0, 9, 2),
-    "api": 35622,
-    "location": "File > Import-Export",
-    "description": ("Import-Export Torchlight 2 Model, Import MESH, UV's, "
-                    "materials and textures"),
-    "warning": "",
-    "wiki_url": ("https://github.com/RobJames-Texas/torchlight-to-blender"),
-    "tracker_url": "https://github.com/RobJames-Texas/torchlight-to-blender",
-    "support": 'OFFICIAL',
-    "category": "Import-Export"}
-
-if "bpy" in locals():
-    import imp
+# ---------------------------------------------------------------------------
+# Dev Reload Helper (Modern Python 3.10+ Compatible)
+# ---------------------------------------------------------------------------
+if "bpy" in sys.modules:
+    import importlib
     if "OgreImport" in locals():
-        imp.reload(OgreImport)
+        importlib.reload(OgreImport)
     if "OgreExport" in locals():
-        imp.reload(OgreExport)
+        importlib.reload(OgreExport)
 
-
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
 def findConverter(p):
     import os
 
@@ -175,12 +167,14 @@ def findConverter(p):
         return sp
 
     # Fail
-    print('Could not find xml converter', p)
+    logging.error('Could not find xml converter: %s', p)
     return None
 
-
+# ---------------------------------------------------------------------------
+# Addon Preferences
+# ---------------------------------------------------------------------------
 class OgreTlAddonPreferences(bpy.types.AddonPreferences):
-    bl_idname = __name__
+    bl_idname = "io_ogre_tl"  # Must match blender_manifest.toml id
 
     def apply_preferences_to_config(self, context):
         config.update_from_addon_preference(context)
@@ -188,15 +182,18 @@ class OgreTlAddonPreferences(bpy.types.AddonPreferences):
     OGRETOOLS_XML_CONVERTER = bpy.props.StringProperty(
         name="OGRETOOLS_XML_CONVERTER",
         subtype='FILE_PATH',
-        default=config.CONFIG['OGRETOOLS_XML_CONVERTER'],
+        default=config.CONFIG.get('OGRETOOLS_XML_CONVERTER', '') if config else '',
         update=apply_preferences_to_config
     )
 
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "OGRETOOLS_XML_CONVERTER")
+        layout.operator("wm.url_open", text="Wiki / Bug Tracker").url = __WIKI_URL__
 
-
+# ---------------------------------------------------------------------------
+# Import Operator
+# ---------------------------------------------------------------------------
 class ImportOgre(bpy.types.Operator, ImportHelper):
     '''Load an Ogre MESH File'''
     bl_idname = "import_scene.mesh"
@@ -266,11 +263,19 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
         keywords['xml_converter'] = findConverter(
             config.get('OGRETOOLS_XML_CONVERTER'))
 
-        print('converter', keywords['xml_converter'])
+        if not keywords['xml_converter']:
+            self.report({'ERROR'}, "OgreXMLConverter not found. Set path in Addon Preferences.")
+            return {'CANCELLED'}
+        
+        bpy.context.window_manager.progress_start("Importing OGRE mesh...")
+        try:
+            result = OgreImport.load(self, context, **keywords)
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to import: {e}")
+            return {'CANCELLED'}
+        finally:
+            bpy.context.window_manager.progress_end()
 
-        bpy.context.window.cursor_set("WAIT")
-        result = OgreImport.load(self, context, **keywords)
-        bpy.context.window.cursor_set("DEFAULT")
         return result
 
     def draw(self, context):
@@ -293,9 +298,9 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
         rate.enabled = self.import_animations
         rate.prop(self, "round_frames")
 
-###############################################################################
-
-
+# ---------------------------------------------------------------------------
+# Export Operator
+# ---------------------------------------------------------------------------
 class ExportOgre(bpy.types.Operator, ExportHelper):
     '''Export a Torchlight MESH File'''
 
@@ -460,9 +465,9 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
         skeleton.prop(self, "export_animation")
         skeleton.prop(self, "export_bonesort")
 
-###############################################################################
-
-
+# ---------------------------------------------------------------------------
+# Menu Registration
+# ---------------------------------------------------------------------------
 def menu_func_import(self, context):
     self.layout.operator(ImportOgre.bl_idname, text="Torchlight OGRE (.mesh)")
 
@@ -477,35 +482,31 @@ classes = (
     ExportOgre
 )
 
-
+# ---------------------------------------------------------------------------
+# Registration / Unregistration
+# ---------------------------------------------------------------------------
 def register():
-    logging.info('Starting io_ogre_TL %s', bl_info["version"])
     for cls in classes:
         bpy.utils.register_class(cls)
-
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+    
+    if hasattr(bpy.types, 'TOPBAR_MT_file_import'):
         bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
         bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
     else:
         bpy.types.INFO_MT_file_import.append(menu_func_import)
         bpy.types.INFO_MT_file_export.append(menu_func_export)
-
-    # read user preferences
     config.update_from_addon_preference(bpy.context)
 
-
 def unregister():
-    logging.info('Unloading io_ogre_TL %s', bl_info["version"])
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+        
+    if hasattr(bpy.types, 'TOPBAR_MT_file_import'):
         bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
         bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     else:
         bpy.types.INFO_MT_file_import.remove(menu_func_import)
         bpy.types.INFO_MT_file_export.remove(menu_func_export)
-
 
 if __name__ == "__main__":
     register()

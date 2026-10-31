@@ -12,44 +12,29 @@ SHOW_EXPORT_DUMPS = False
 SHOW_EXPORT_TRACE = False
 SHOW_EXPORT_TRACE_VX = False
 
-# default blender version of script
-blender_version = 259
-
 
 def hash_combine(x, y):
     return x ^ y + 0x9e3779b9 + (x << 6) + (x >> 2)
 
 
 def getIsHidden(obj):
-    if hasattr(obj, "hide_viewport"):
-        return obj.hide_viewport  # 2.8
-    else:
-        return obj.hide
+    return obj.hide_viewport  # 2.8
 
 
 def setIsHidden(obj, isHidden):
-    if hasattr(obj, "hide_viewport"):
-        obj.hide_viewport = isHidden
-    else:
-        obj.hide = isHidden
+    obj.hide_viewport = isHidden
 
 
 def toMesh(obj, applyModifiers):
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):  # 2.8
-        if applyModifiers:
-            depsgraph = bpy.context.evaluated_depsgraph_get()
-            return obj.evaluated_get(depsgraph).to_mesh()
-        else:
-            return obj.to_mesh()
-    else:  # Legacy
-        return obj.to_mesh(bpy.context.scene, applyModifiers, 'PREVIEW')
+    if applyModifiers:
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        return obj.evaluated_get(depsgraph).to_mesh()
+    else:
+        return obj.to_mesh()
 
 
 def getUVTextures(mesh):
-    if hasattr(mesh, "uv_textures"):  # legacy
-        return mesh.uv_textures
-    else:
-        return mesh.uv_layers
+    return mesh.uv_layers
 
 
 class VertexInfo(object):
@@ -236,10 +221,7 @@ class Skeleton(object):
 
 
 def matmul(matracies):
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-        return reduce((lambda x, y: operator.matmul(x, y)), matracies)
-    else:
-        return reduce((lambda x, y: x * y), matracies)
+    return reduce((lambda x, y: operator.matmul(x, y)), matracies)
 
 
 def bCollectAnimationData(meshData):
@@ -278,7 +260,7 @@ def bCollectAnimationData(meshData):
             meshData['animations'].append(animation)
 
         animdata.action = currentAction
-        scene.frame_set(currentFrame)
+        scene.frame = currentFrame
 
 
 def collectAnimationData(armature, frame_range, fps, step=1):
@@ -314,17 +296,14 @@ def collectAnimationData(armature, frame_range, fps, step=1):
     # Collect data
     for frame in range(int(start), int(end)+1, step):
         time = (frame - start) / fps
-        bpy.context.scene.frame_set(frame)
+        bpy.context.scene.frame = frame
         for bone in armature.pose.bones:
             loc = bone.location
             rot = bone.rotation_quaternion.normalized()
             scl = bone.scale
 
             # transform transation into parent coordinates
-            if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-                loc = mat[bone.name] @ loc
-            else:
-                loc = mat[bone.name] * loc
+            loc = mat[bone.name] @ loc
 
             keyframes[bone.name][0].append((time, (loc[0], loc[1], loc[2])))
             keyframes[bone.name][1].append(
@@ -420,16 +399,8 @@ def xSaveAnimation(animation, xDoc, xAnimations):
                 keyframe.appendChild(scale)
 
 
-# borrowed from here:
-# https://theduckcow.com/2019/update-addons-both-blender-28-and-27-support/
 def setActiveObject(context, obj):
-    if hasattr(context, "view_layer"):
-        # 2.8
-        context.view_layer.objects.active = obj
-    else:
-        # 2.7
-        context.scene.objects.active = obj
-#########################################
+    context.view_layer.objects.active = obj
 
 
 def fileExist(filepath):
@@ -792,10 +763,11 @@ def luminosity(c):
     return c[0] * 0.25 + c[1] * 0.5 + c[2] * 0.25
 
 
-def bCollectMeshData(meshData, selectedObjects, applyModifiers,
+def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
                      exportColour, exportTangents, exportBinormals,
                      exportPoses):
     import bmesh
+    depsgraph = context.evaluated_depsgraph_get()
     for ob in selectedObjects:
         # ob = bpy.types.Object ##
         materials = []
@@ -815,13 +787,9 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
             _sm_faces_.append([])
             _sm_verts_.append([])
 
-        # mesh = bpy.types.Mesh ##
-        if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-            tobj = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())\
-                if applyModifiers else ob
-            mesh = tobj.to_mesh()
-        else:
-            mesh = toMesh(ob, applyModifiers)
+        tobj = ob.evaluated_get(depsgraph) \
+            if applyModifiers else ob
+        mesh = tobj.to_mesh()
 
         # use bmesh to triangulate
         bm = bmesh.new()
@@ -844,19 +812,23 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
         # Pick colour data
         colourData = None
         alphaData = None
-        if mesh.vertex_colors.active and exportColour:
-            colourData = mesh.vertex_colors.active.data
-            for layer in mesh.vertex_colors:
-                if layer.name.lower() == 'alpha':
-                    alphaData = layer.data
+        if exportColour and mesh.color_attributes:
+            colorAttr = None
+            for attr in mesh.color_attributes:
+                if attr.name.lower() == 'alpha':
+                    alphaData = attr.data
                     # pick a different one for colour if alpha layer is active
-                    if layer.active:
-                        colourData = None
-                        for layer in mesh.vertex_colors:
-                            if not layer.active:
-                                colourData = layer.data
+                    if attr.is_active_render_color_attribute:
+                        colorAttr = None
+                        for attr2 in mesh.color_attributes:
+                            if attr2.is_active_render_color_attribute is False:
+                                colorAttr = attr2
                                 break
+                        colourData = colorAttr.data if colorAttr else None
                     break
+            if not alphaData:
+                # use first available color attribute
+                colourData = mesh.color_attributes[0].data
 
         map = {}
 
@@ -1008,10 +980,11 @@ def bCollectMeshData(meshData, selectedObjects, applyModifiers,
     return meshData
 
 
-def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
+def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
                              exportColour, exportTangents, exportBinormals,
                              exportPoses):
     import bmesh
+    depsgraph = context.evaluated_depsgraph_get()
     subMeshesData = []
     for ob in selectedObjects:
         subMeshData = {}
@@ -1020,13 +993,9 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
         for m in ob.data.materials:
             if m:
                 materialName = m.name
-        # mesh = bpy.types.Mesh ##
-        if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-            tobj = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())\
-                if applyModifiers else ob
-            mesh = tobj.to_mesh()
-        else:
-            mesh = toMesh(ob, applyModifiers)
+        tobj = ob.evaluated_get(depsgraph) \
+            if applyModifiers else ob
+        mesh = tobj.to_mesh()
 
         # use bmesh to triangulate
         bm = bmesh.new()
@@ -1049,19 +1018,23 @@ def bCollectMeshDataOriginal(meshData, selectedObjects, applyModifiers,
         # Pick colour data
         colourData = None
         alphaData = None
-        if mesh.vertex_colors.active and exportColour:
-            colourData = mesh.vertex_colors.active.data
-            for layer in mesh.vertex_colors:
-                if layer.name.lower() == 'alpha':
-                    alphaData = layer.data
+        if exportColour and mesh.color_attributes:
+            colorAttr = None
+            for attr in mesh.color_attributes:
+                if attr.name.lower() == 'alpha':
+                    alphaData = attr.data
                     # pick a different one for colour if alpha layer is active
-                    if layer.active:
-                        colourData = None
-                        for layer in mesh.vertex_colors:
-                            if not layer.active:
-                                colourData = layer.data
+                    if attr.is_active_render_color_attribute:
+                        colorAttr = None
+                        for attr2 in mesh.color_attributes:
+                            if attr2.is_active_render_color_attribute is False:
+                                colorAttr = attr2
                                 break
+                        colourData = colorAttr.data if colorAttr else None
                     break
+            if not alphaData:
+                # use first available color attribute
+                colourData = mesh.color_attributes[0].data
 
         vertexList = []
         newFaces = []
@@ -1247,15 +1220,6 @@ def bCollectSkeletonData(blenderMeshData, selectedObjects, sort):
 
 
 def bCollectMaterialData(blenderMeshData, selectedObjects):
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-        # 2.8
-        bCollectMaterialDataTwoEight(blenderMeshData, selectedObjects)
-    else:
-        # Legacy
-        bCollectMaterialDataLegacy(blenderMeshData, selectedObjects)
-
-
-def bCollectMaterialDataTwoEight(blenderMeshData, selectedObjects):
     allMaterials = {}
     blenderMeshData['materials'] = allMaterials
 
@@ -1265,8 +1229,10 @@ def bCollectMaterialDataTwoEight(blenderMeshData, selectedObjects):
                 # mat = bpy.types.Material ##
                 if mat and mat.name not in allMaterials:
                     matInfo = {}
-                    bsdf = mat.node_tree.nodes.get('Principled BSDF')
-                    assert(bsdf)
+                    bsdf = mat.node_tree.nodes.get('ShaderNodeBsdfPrincipled')
+                    if bsdf is None:
+                        print(f"Warning: No Principled BSDF in material '{mat.name}', skipping.")
+                        continue
                     allMaterials[mat.name] = matInfo
 
                     # ambient  - none in eevee
@@ -1314,42 +1280,6 @@ def bCollectMaterialDataTwoEight(blenderMeshData, selectedObjects):
                                 matInfo['textures'].append(texInfo)
 
 
-def bCollectMaterialDataLegacy(blenderMeshData, selectedObjects):
-    allMaterials = {}
-    blenderMeshData['materials'] = allMaterials
-
-    for ob in selectedObjects:
-        if ob.type == 'MESH' and len(ob.data.materials) > 0:
-            for mat in ob.data.materials:
-                # mat = bpy.types.Material ##
-                if mat and mat.name not in allMaterials:
-                    matInfo = {}
-                    allMaterials[mat.name] = matInfo
-                    # ambient
-                    matInfo['ambient'] = [mat.ambient,
-                                          mat.ambient,
-                                          mat.ambient]
-                    # diffuse
-                    matInfo['diffuse'] = [mat.diffuse_color[0],
-                                          mat.diffuse_color[1],
-                                          mat.diffuse_color[2]]
-                    # specular
-                    matInfo['specular'] = [mat.specular_color[0],
-                                           mat.specular_color[1],
-                                           mat.specular_color[2]]
-                    # emissive
-                    matInfo['emissive'] = [mat.emit, mat.emit, mat.emit]
-                    # texture
-                    if len(mat.texture_slots) > 0:
-                        matInfo['textures'] = []
-                        for slot in mat.texture_slots:
-                            if slot and slot.texture.type == 'IMAGE' and \
-                                    slot.texture.image:
-                                texInfo = {}
-                                texInfo['texture'] = slot.texture.image.name
-                                texInfo['texture_path'] = \
-                                    slot.texture.image.filepath
-                                matInfo['textures'].append(texInfo)
 
 
 def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
@@ -1390,13 +1320,8 @@ def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
         return False
 
 
-# borrowed from here:
-# https://theduckcow.com/2019/update-addons-both-blender-28-and-27-support/
-def select_get(object):
-    if hasattr(object, "select_get"):
-        return object.select_get()
-    else:
-        return object.select
+def select_get(obj):
+    return obj.is_selected_in_viewport
 
 
 def save(operator, context, filepath,
@@ -1419,10 +1344,6 @@ def save(operator, context, filepath,
          export_bonesort='ALPHA'
          ):
 
-    global blender_version
-
-    blender_version = bpy.app.version[0]*100 + bpy.app.version[1]
-
     # just check if there is extension - .mesh
     if '.mesh' not in filepath.lower():
         filepath = filepath + ".mesh"
@@ -1432,7 +1353,7 @@ def save(operator, context, filepath,
 
     # get mesh data from selected objects
     selectedObjects = []
-    scn = bpy.context.scene
+    scn = context.scene
     for ob in scn.objects:
         if select_get(ob) is True and ob.type != 'ARMATURE':
             selectedObjects.append(ob)
@@ -1459,7 +1380,7 @@ def save(operator, context, filepath,
     # mesh
     # TODO: Turn this into a factory pattern. Need to follow DRY.
     if enable_by_material:
-        bCollectMeshData(blenderMeshData,
+        bCollectMeshData(blenderMeshData, context,
                          selectedObjects,
                          apply_modifiers,
                          export_colour,
@@ -1467,7 +1388,7 @@ def save(operator, context, filepath,
                          export_binormals,
                          export_poses)
     else:
-        bCollectMeshDataOriginal(blenderMeshData,
+        bCollectMeshDataOriginal(blenderMeshData, context,
                                  selectedObjects,
                                  apply_modifiers,
                                  export_colour,

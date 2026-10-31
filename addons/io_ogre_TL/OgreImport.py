@@ -11,20 +11,13 @@ SHOW_IMPORT_DUMPS = False
 SHOW_IMPORT_TRACE = False
 DEFAULT_KEEP_XML = False
 MIN_BONE_LENGTH = 0.00001  # Prevent automatic removal of bones
-# default blender version of script
-blender_version = 259
 
 
 # makes sure name doesn't exceeds blender naming limits
 # also keeps after name (as Torchlight uses names to identify types
 #  -boots, chest, ...- with names)
-# TODO: this is not needed for Blender 2.62 and above
 def GetValidBlenderName(name):
-    global blender_version
-
-    maxChars = 20
-    if blender_version > 262:
-        maxChars = 63
+    maxChars = 63
 
     newname = name
     if(len(name) > maxChars):
@@ -45,20 +38,10 @@ def GetValidBlenderName(name):
     return newname
 
 
-# borrowed from here:
-# https://theduckcow.com/2019/update-addons-both-blender-28-and-27-support/
-def select_set(object, state):
-    if hasattr(object, "select_set"):
-        object.select_set(state)
-    else:
-        object.select = state
 
 
 def matmul(matracies):
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-        return reduce((lambda x, y: operator.matmul(x, y)), matracies)
-    else:
-        return reduce((lambda x, y: x * y), matracies)
+    return reduce((lambda x, y: operator.matmul(x, y)), matracies)
 
 
 def xOpenFile(filename):
@@ -604,10 +587,7 @@ def VectorSum(vec1, vec2):
 ###############################################################################
 
 def scnUpdate():
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-        bpy.context.view_layer.update()
-    else:
-        bpy.context.scene.update()
+    bpy.context.view_layer.update()
 
 
 def quaternionFromAngleAxis(angle, x, y, z):
@@ -748,10 +728,7 @@ def bCreateAnimations(meshData):
                 m = mat[target].transposed()
                 for i in range(0, len(data[0])):
                     v = Vector(data[0][i][1])
-                    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-                        data[0][i][1] = m @ v
-                    else:
-                        data[0][i][1] = m * v
+                    data[0][i][1] = m @ v
 
                 # create fcurves
                 for i in range(3):
@@ -794,7 +771,7 @@ def bCreateMesh(meshData, folder, name, filepath, useAutoSmooth):
 
     # temporarily select all imported objects
     for subOb in subObjs:
-        select_set(subOb, True)
+        subOb.select_set(True)
 
     if SHOW_IMPORT_DUMPS:
         importDump = filepath + "IDump"
@@ -812,11 +789,7 @@ def bCreateSkeleton(meshData, name):
     amt = bpy.data.armatures.new(name)
     rig = bpy.data.objects.new(name, amt)
     meshData['rig'] = rig
-    if hasattr(rig, "show_in_front"):
-        rig.show_in_front = True
-        rig.display_type = 'WIRE'
-    else:
-        rig.show_x_ray = True
+    rig.display_type = 'WIRE'
 
     # Link object to scene
     scn = bpy.context.scene
@@ -860,18 +833,12 @@ def bCreateSkeleton(meshData, name):
             tailVector = averageBone
 
         rotmat = boneData['rotmatAS']
-        if blender_version <= 262:
-            r0 = [rotmat[0].x] + [rotmat[0].y] + [rotmat[0].z]
-            r1 = [rotmat[1].x] + [rotmat[1].y] + [rotmat[1].z]
-            r2 = [rotmat[2].x] + [rotmat[2].y] + [rotmat[2].z]
-            boneRotMatrix = Matrix((r1, r0, r2))
-        elif blender_version > 262:
-            # this is fugly way of flipping matrix
-            r0 = [rotmat.col[0].x] + [rotmat.col[0].y] + [rotmat.col[0].z]
-            r1 = [rotmat.col[1].x] + [rotmat.col[1].y] + [rotmat.col[1].z]
-            r2 = [rotmat.col[2].x] + [rotmat.col[2].y] + [rotmat.col[2].z]
-            tmpR = Matrix((r1, r0, r2))
-            boneRotMatrix = Matrix((tmpR.col[0], tmpR.col[1], tmpR.col[2]))
+        # this is a way of flipping matrix for Blender 4.2+
+        r0 = [rotmat.col[0].x] + [rotmat.col[0].y] + [rotmat.col[0].z]
+        r1 = [rotmat.col[1].x] + [rotmat.col[1].y] + [rotmat.col[1].z]
+        r2 = [rotmat.col[2].x] + [rotmat.col[2].y] + [rotmat.col[2].z]
+        tmpR = Matrix((r1, r0, r2))
+        boneRotMatrix = Matrix((tmpR.col[0], tmpR.col[1], tmpR.col[2]))
 
         boneObj.head = Vector([0, 0, 0])
         boneObj.tail = Vector([0, tailVector, 0])
@@ -931,13 +898,6 @@ def bMergeVertices(subMesh):
 
 
 def bCreateSubMeshes(meshData, meshName, useAutoSmooth):
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-        return twoEightCreateSubMeshes(meshData, meshName, useAutoSmooth)
-    else:
-        return legacyBCreateSubmeshes(meshData, meshName, useAutoSmooth)
-
-
-def twoEightCreateSubMeshes(meshData, meshName, useAutoSmooth):
     allObjects = []
     submeshes = meshData['submeshes']
     scene = bpy.context.scene
@@ -999,22 +959,20 @@ def twoEightCreateSubMeshes(meshData, meshName, useAutoSmooth):
                 if texturePath:
                     hasTexture = True
                     # try to find among already loaded images
-                    tex = None
-                    for lTex in bpy.data.textures:
-                        if lTex.type == 'IMAGE':
-                            if lTex.image.name == matInfo['imageNameOnly']:
-                                tex = lTex
-                                break
-                    if not tex:
-                        tex = bpy.data.textures.new('ColorTex', type='IMAGE')
-                        tex.image = bpy.data.images.load(texturePath)
-                        tex.use_alpha = True
+                    loadedImage = None
+                    for img in bpy.data.images:
+                        if img.name == matInfo['imageNameOnly']:
+                            loadedImage = img
+                            break
+                    if not loadedImage and texturePath:
+                        loadedImage = bpy.data.images.load(texturePath)
 
             # Create shadeless material and MTex
             mat = bpy.data.materials.new(subMeshName)
             mat.use_nodes = True
-            bsdf = mat.node_tree.nodes.get('Principled BSDF')
-            assert(bsdf)
+            bsdf = mat.node_tree.nodes.get('ShaderNodeBsdfPrincipled')
+            if bsdf is None:
+                bsdf = mat.node_tree.nodes.new(type='ShaderNodeBsdfPrincipled')
 
             # ambient
             # if 'ambient' in matInfo:  # no AO in eevee
@@ -1035,9 +993,9 @@ def twoEightCreateSubMeshes(meshData, meshName, useAutoSmooth):
             node_texture.name = 'DiffuseTexture'
             node_texture.location = -300, 0
             # mtex = mat.texture_slots.add()
-            if hasTexture:
+            if hasTexture and loadedImage:
                 # mtex.texture = tex
-                node_texture.image = tex.image
+                node_texture.image = loadedImage
             links = mat.node_tree.links
             links.new(node_texture.outputs[0], bsdf.inputs[0])
             # mtex.texture_coords = 'UV'
@@ -1089,7 +1047,7 @@ def twoEightCreateSubMeshes(meshData, meshName, useAutoSmooth):
         if 'texcoordsets' in geometry and 'uvsets' in geometry:
             uvsets = geometry['uvsets']
             for j in range(geometry['texcoordsets']):
-                uvData = me.uv_layers.new(name='UVLayer'+str(j)).data
+                uvData = me.uv_layers.add(name='UVLayer'+str(j)).data
                 loopIndex = 0
                 for face in faces:
                     for v in face:
@@ -1098,7 +1056,7 @@ def twoEightCreateSubMeshes(meshData, meshName, useAutoSmooth):
 
         # vertex colors
         if 'vertexcolors' in geometry:
-            colourData = me.vertex_colors.new(name='Colour'+str(j)).data
+            colourData = me.color_attributes.new('Colour'+str(j), type='COLOR').data
             vcolors = geometry['vertexcolors']
             loopIndex = 0
             for face in faces:
@@ -1109,7 +1067,7 @@ def twoEightCreateSubMeshes(meshData, meshName, useAutoSmooth):
             # Vertex Alpha
             for c in vcolors:
                 if c[3] != 1.0:
-                    alphaData = me.vertex_colors.new(name='Alpha'+str(j)).data
+                    alphaData = me.color_attributes.new('Alpha'+str(j), type='COLOR').data
                     loopIndex = 0
                     for face in faces:
                         for v in face:
@@ -1156,7 +1114,9 @@ def twoEightCreateSubMeshes(meshData, meshName, useAutoSmooth):
                             [vkey[1] + b[0], vkey[2] + b[1], vkey[3] + b[2]]
 
         # Update mesh with new data
-        me.update(calc_edges=True)
+        # No 'verbose' parameter — Blender 4.2+ always uses the internal default
+        me.validate()
+        me.update()
 
         if useAutoSmooth:
             # me.use_auto_smooth = True
@@ -1190,259 +1150,6 @@ def twoEightCreateSubMeshes(meshData, meshName, useAutoSmooth):
                       len(me.polygons))
 
         allObjects.append(ob)
-
-    return allObjects
-
-
-def legacyBCreateSubmeshes(meshData, meshName, useAutoSmooth):
-    allObjects = []
-    submeshes = meshData['submeshes']
-
-    for subMeshIndex in range(len(submeshes)):
-        subMeshData = submeshes[subMeshIndex]
-        subMeshName = subMeshData['material']
-
-        # Create mesh and object
-        me = bpy.data.meshes.new(subMeshName)
-        ob = bpy.data.objects.new(subMeshName, me)
-        # Link object to scene
-        scn = bpy.context.scene
-        # scn.objects.link(ob)
-        addObjectToScene(bpy.context, ob)
-        # scn.objects.active = ob
-        setActiveObject(bpy.context, ob)
-        scnUpdate()
-
-        # check for submesh geometry, or take the shared one
-        if 'geometry' in subMeshData.keys():
-            geometry = subMeshData['geometry']
-        else:
-            geometry = meshData['sharedgeometry']
-
-        verts = geometry['positions']
-        faces = subMeshData['faces']
-        hasNormals = False
-        if 'normals' in geometry.keys():
-            normals = geometry['normals']
-            hasNormals = True
-        # mesh vertices and faces
-
-        if(blender_version <= 262):
-            # vertices and faces of mesh
-            me.from_pydata(verts, [], faces)
-            # mesh normals
-            c = 0
-            for v in me.vertices:
-                if hasNormals:
-                    v.normal = Vector(
-                        (normals[c][0], normals[c][1], normals[c][2]))
-                    c += 1
-        elif(blender_version > 262):
-            # vertices and faces of mesh
-            VertLength = len(verts)
-            FaceLength = len(faces)
-            me.vertices.add(VertLength)
-            me.tessfaces.add(FaceLength)
-            for i in range(VertLength):
-                me.vertices[i].co = verts[i]
-                if hasNormals:
-                    me.vertices[i].normal = Vector(
-                        (normals[i][0], normals[i][1], normals[i][2]))
-            for i in range(FaceLength):
-                NewFace = (faces[i][0], faces[i][1], faces[i][2], 0)
-                me.tessfaces[i].vertices_raw = NewFace
-
-        # blender 2.62 <-> 2.63 compatibility
-        if(blender_version <= 262):
-            meshFaces = me.faces
-            meshUV_textures = me.uv_textures
-            meshVertex_colors = me.vertex_colors
-        elif(blender_version > 262):
-            meshFaces = me.tessfaces
-            meshUV_textures = me.tessface_uv_textures
-            meshVertex_colors = me.tessface_vertex_colors
-
-        # smooth
-        # auto-smooth
-        if useAutoSmooth:
-            ob.data.use_auto_smooth = True
-            ob.data.auto_smooth_angle = 1.5708  # 90 degrees
-        else:
-            for f in meshFaces:
-                f.use_smooth = True
-
-        hasTexture = False
-        # material for the submesh
-        # Create image texture from image.
-        if subMeshName in meshData['materials']:
-            matInfo = meshData['materials'][subMeshName]  # material data
-            if 'texture' in matInfo:
-                texturePath = matInfo['texture']
-                if texturePath:
-                    hasTexture = True
-                    # try to find among already loaded images
-                    tex = None
-                    for lTex in bpy.data.textures:
-                        if lTex.type == 'IMAGE':
-                            if lTex.image.name == matInfo['imageNameOnly']:
-                                tex = lTex
-                                break
-                    if not tex:
-                        tex = bpy.data.textures.new('ColorTex', type='IMAGE')
-                        tex.image = bpy.data.images.load(texturePath)
-                        tex.use_alpha = True
-
-            # Create shadeless material and MTex
-            mat = bpy.data.materials.new(subMeshName)
-            # ambient
-            if 'ambient' in matInfo:
-                mat.ambient = matInfo['ambient'][0]
-            # diffuse
-            if 'diffuse' in matInfo:
-                mat.diffuse_color = matInfo['diffuse']
-            # specular
-            if 'specular' in matInfo:
-                mat.specular_color = matInfo['specular']
-            # emmisive
-            if 'emissive' in matInfo:
-                mat.emit = matInfo['emissive'][0]
-            mat.use_shadeless = True
-            mtex = mat.texture_slots.add()
-            if hasTexture:
-                mtex.texture = tex
-            mtex.texture_coords = 'UV'
-            mtex.use_map_color_diffuse = True
-
-            # add material to object
-            ob.data.materials.append(mat)
-            # print(me.uv_textures[0].data.values()[0].image)
-
-        # texture coordinates
-        if 'texcoordsets' in geometry and 'uvsets' in geometry:
-            uvsets = geometry['uvsets']
-            for j in range(geometry['texcoordsets']):
-                uvLayer = meshUV_textures.new('UVLayer'+str(j))
-
-                meshUV_textures.active = uvLayer
-
-                for f in meshFaces:
-                    uvco1sets = uvsets[f.vertices[0]]
-                    uvco2sets = uvsets[f.vertices[1]]
-                    uvco3sets = uvsets[f.vertices[2]]
-                    uvco1 = Vector((uvco1sets[j][0], uvco1sets[j][1]))
-                    uvco2 = Vector((uvco2sets[j][0], uvco2sets[j][1]))
-                    uvco3 = Vector((uvco3sets[j][0], uvco3sets[j][1]))
-                    uvLayer.data[f.index].uv = (uvco1, uvco2, uvco3)
-                    if hasTexture:
-                        # this will link image to faces
-                        uvLayer.data[f.index].image = tex.image
-                        # uvLayer.data[f.index].use_image=True
-
-        # vertex colors
-        if 'vertexcolors' in geometry:
-            colorLayer = meshVertex_colors.new('Colour')
-            meshVertex_colors.active = colorLayer
-            vcolors = geometry['vertexcolors']
-            for f in meshFaces:
-                colv1 = vcolors[f.vertices[0]]
-                colv2 = vcolors[f.vertices[1]]
-                colv3 = vcolors[f.vertices[2]]
-                colorLayer.data[f.index].color1 = (
-                    colv1[0], colv1[1], colv1[2])
-                colorLayer.data[f.index].color2 = (
-                    colv2[0], colv2[1], colv2[2])
-                colorLayer.data[f.index].color3 = (
-                    colv3[0], colv3[1], colv3[2])
-
-            # Vertex Alpha
-            for c in vcolors:
-                if c[3] != 1.0:
-                    alphaLayer = meshVertex_colors.new('Alpha')
-                    for f in meshFaces:
-                        a1 = vcolors[f.vertices[0]][3]
-                        a2 = vcolors[f.vertices[1]][3]
-                        a3 = vcolors[f.vertices[2]][3]
-                        alphaLayer.data[f.index].color1 = (a1, a1, a1)
-                        alphaLayer.data[f.index].color2 = (a2, a2, a2)
-                        alphaLayer.data[f.index].color3 = (a3, a3, a3)
-                    break
-
-        # bone assignments:
-        if 'boneIDs' in meshData:
-            if 'boneassignments' in geometry.keys():
-                vgroups = geometry['boneassignments']
-                for vgname, vgroup in vgroups.items():
-                    # print("creating VGroup %s" % vgname)
-                    grp = ob.vertex_groups.new(vgname)
-                    for (v, w) in vgroup:
-                        grp.add([v], w, 'REPLACE')
-            # Give mesh object an armature modifier, using vertex groups but
-            # not envelopes
-        if 'skeleton' in meshData:
-            skeletonName = meshData['skeletonName']
-            mod = ob.modifiers.new('OgreSkeleton', 'ARMATURE')
-            mod.object = bpy.data.objects[skeletonName]  # gets the rig object
-            mod.use_bone_envelopes = False
-            mod.use_vertex_groups = True
-        elif 'armature' in meshData:
-            mod = ob.modifiers.new('OgreSkeleton', 'ARMATURE')
-            mod.object = meshData['armature']
-            mod.use_bone_envelopes = False
-            mod.use_vertex_groups = True
-
-        # Shape keys (poses)
-        if 'poses' in meshData:
-            base = None
-            for pose in meshData['poses']:
-                if(pose['submesh'] == subMeshIndex):
-                    if base is None:
-                        # must have base shape
-                        base = ob.shape_key_add('Basis')
-                    name = pose['name']
-                    print('creating pose', name)
-                    shape = ob.shape_key_add(name)
-                    for vkey in pose['data']:
-                        b = base.data[vkey[0]].co
-                        me.shape_keys.key_blocks[name].data[vkey[0]].co = [
-                            vkey[1] + b[0], vkey[2] + b[1], vkey[3] + b[2]]
-
-        # Update mesh with new data
-        me.update(calc_edges=True)
-        me.use_auto_smooth = True
-
-        bpy.ops.object.editmode_toggle()
-        bpy.ops.mesh.faces_shade_smooth()
-        # bpy.ops.mesh.remove_doubles(threshold=0.001)
-        # TODO: Only remove doubles in the same vertex group?
-        bpy.ops.object.editmode_toggle()
-
-        # try to set custom normals
-        if hasNormals:
-            noChange = len(me.loops) == len(faces)*3
-            if not noChange:
-                print('Removed',  len(faces) - len(me.loops)/3, 'faces')
-            split = []
-            polyIndex = 0
-            for face in faces:
-                if noChange or matchFace(face, verts, me, polyIndex):
-                    polyIndex += 1
-                    for vx in face:
-                        split.append(normals[vx])
-
-            if len(split) == len(me.loops):
-                me.normals_split_custom_set(split)
-            else:
-                print('Warning: Failed to import mesh normals', polyIndex,
-                      '/', len(me.polygons))
-
-        allObjects.append(ob)
-
-    # forced view mode with textures
-    bpy.context.scene.game_settings.material_mode = 'GLSL'
-    areas = bpy.context.screen.areas
-    for area in areas:
-        if area.type == 'VIEW_3D':
-            area.spaces.active.viewport_shade = 'TEXTURED'
 
     return allObjects
 
@@ -1482,29 +1189,16 @@ def convertXML(convertor, filename, use_existing=True):
             return False
 
 
-# borrowed from here:
-# https://theduckcow.com/2019/update-addons-both-blender-28-and-27-support/
 def setActiveObject(context, obj):
-    if hasattr(context, "view_layer"):
-        # 2.8
-        context.view_layer.objects.active = obj
-    else:
-        # 2.7
-        context.scene.objects.active = obj
+    context.view_layer.objects.active = obj
 
 
 def addObjectToScene(context, obj):
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-        context.scene.collection.objects.link(obj)
-    else:
-        context.scene.objects.link(obj)
+    context.scene.collection.objects.link(obj)
 
 
 def removeObjectFromScene(context, obj):
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
-        context.scene.collection.objects.unlink(obj)
-    else:
-        context.scene.objects.unlink(obj)
+    context.scene.collection.objects.unlink(obj)
 
 
 def getBoneNameMapFromArmature(arm):
@@ -1527,10 +1221,6 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
          import_autosmooth=False, import_normals=True, import_shapekeys=True,
          import_animations=False, round_frames=False,
          use_selected_skeleton=False):
-    global blender_version
-
-    blender_version = bpy.app.version[0]*100 + bpy.app.version[1]
-
     print("loading", str(filepath))
 
     filepath = filepath
