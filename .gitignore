@@ -133,3 +133,6 @@ dmypy.json
 *.dll
 .vscode
 *.zip
+
+# Claude Code settings
+.claude/

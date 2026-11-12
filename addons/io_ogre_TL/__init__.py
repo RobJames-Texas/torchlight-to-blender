@@ -20,7 +20,7 @@
 
 """
 Name: 'OGRE for Torchlight 2(*.MESH)'
-Blender: 2.63a, 2.77a, 2.79, 2.8x
+Blender: 4.2
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
 
@@ -37,21 +37,21 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 
 """
 
+import sys
+import logging
+import bpy
 from . import config
 from bpy_extras.io_utils import (ExportHelper,
                                  ImportHelper,
-                                 path_reference_mode,
-                                 axis_conversion,
                                  )
 from bpy.props import (BoolProperty,
-                       FloatProperty,
                        StringProperty,
                        EnumProperty,
                        )
-import logging
-import bpy
+
 __author__ = "Rob James"
-__version__ = "0.9.02 09-Oct-2022"
+__version__ = "0.9.03 2026-07-03"
+__WIKI_URL__ = "https://github.com/RobJames-Texas/torchlight-to-blender"
 
 __bpydoc__ = """\
 This script imports/exports Torchlight Ogre models into/from Blender.
@@ -74,6 +74,7 @@ Known issues:<br>
       to Blender when exported
 
 History:<br>
+    * v0.9.03  (03-Jul-2026)- Work to support Blender 4.2, and some other minor fixes.
     * v0.9.02  (09-Oct-2022)- Fix for animations not being imported in Blender 2.8.
     * v0.9.01  (23-Oct-2021)- Allow bones to be exported in alphabetical order.
     * v0.9.00  (03-Apr-2021)- Initial support for Blender 2.8 and up
@@ -138,29 +139,19 @@ History:<br>
     * v0.0     (12-Feb-2012) - file created
 """
 
-bl_info = {
-    "name": "Torchlight 2 MESH format",
-    "author": "Rob James",
-    "blender": (2, 80, 0),
-    "version": (0, 9, 2),
-    "api": 35622,
-    "location": "File > Import-Export",
-    "description": ("Import-Export Torchlight 2 Model, Import MESH, UV's, "
-                    "materials and textures"),
-    "warning": "",
-    "wiki_url": ("https://github.com/RobJames-Texas/torchlight-to-blender"),
-    "tracker_url": "https://github.com/RobJames-Texas/torchlight-to-blender",
-    "support": 'OFFICIAL',
-    "category": "Import-Export"}
-
-if "bpy" in locals():
-    import imp
+# ---------------------------------------------------------------------------
+# Dev Reload Helper (Modern Python 3.10+ Compatible)
+# ---------------------------------------------------------------------------
+if "bpy" in sys.modules:
+    import importlib
     if "OgreImport" in locals():
-        imp.reload(OgreImport)
+        importlib.reload(OgreImport)
     if "OgreExport" in locals():
-        imp.reload(OgreExport)
+        importlib.reload(OgreExport)
 
-
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
 def findConverter(p):
     import os
 
@@ -175,75 +166,61 @@ def findConverter(p):
         return sp
 
     # Fail
-    print('Could not find xml converter', p)
+    logging.error('Could not find xml converter: %s', p)
     return None
 
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Extension preferences — imported from preferences.py (Blender 5.x+)
+# ---------------------------------------------------------------------------
+from . import preferences as _pref
 
-class OgreTlAddonPreferences(bpy.types.AddonPreferences):
-    bl_idname = __name__
-
-    def apply_preferences_to_config(self, context):
-        config.update_from_addon_preference(context)
-
-    OGRETOOLS_XML_CONVERTER = bpy.props.StringProperty(
-        name="OGRETOOLS_XML_CONVERTER",
-        subtype='FILE_PATH',
-        default=config.CONFIG['OGRETOOLS_XML_CONVERTER'],
-        update=apply_preferences_to_config
-    )
-
-    def draw(self, context):
-        layout = self.layout
-        layout.prop(self, "OGRETOOLS_XML_CONVERTER")
+# The preference class is registered along with the operators in register() below.
+OgreTlAddonPreferences = _pref.OgreTlAddonPreferences
 
 
+# ---------------------------------------------------------------------------
+# Import Operator
+# ---------------------------------------------------------------------------
 class ImportOgre(bpy.types.Operator, ImportHelper):
     '''Load an Ogre MESH File'''
     bl_idname = "import_scene.mesh"
-    bl_label = "Import MESH"
-    bl_options = {'PRESET'}
+    bl_label = "Import OGRE Mesh"
+    bl_options = {'PRESET', 'UNDO'}
 
     filename_ext = ".mesh"
 
-    keep_xml = BoolProperty(
+    keep_xml: BoolProperty(
         name="Keep XML",
         description="Keeps the XML file when converting from .MESH",
         default=False,
     )
 
-    import_autosmooth = BoolProperty(
-        name="Use Auto-Smooth",
-        description='Use auto-smooth instead of smooth-shading. This will'
-             ' result in a larger mesh file size, but gives you greater'
-             ' control over which edges in your mesh are smooth verses hard',
-        default=False
-    )
-
-    import_normals = BoolProperty(
+    import_normals: BoolProperty(
         name="Import Normals",
         description="Import custom mesh normals",
         default=True,
     )
 
-    import_animations = BoolProperty(
+    import_animations: BoolProperty(
         name="Import animation",
         description="Import animations as actions",
         default=True,
     )
 
-    round_frames = BoolProperty(
+    round_frames: BoolProperty(
         name="Adjust frame rate",
         description="Adjust scene frame rate to match imported animation",
         default=True,
     )
 
-    import_shapekeys = BoolProperty(
+    import_shapekeys: BoolProperty(
         name="Import shape keys",
         description="Import shape keys (morphs)",
         default=True,
     )
 
-    use_selected_skeleton = BoolProperty(
+    use_selected_skeleton: BoolProperty(
         name='Use selected skeleton',
         description='Link with selected armature object rather than'
                     ' importing a skeleton.\nUse this for importing'
@@ -253,7 +230,7 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
         default=False,
     )
 
-    filter_glob = StringProperty(
+    filter_glob: StringProperty(
         default="*.mesh;*.MESH;.xml;.XML",
         options={'HIDDEN'},
     )
@@ -266,18 +243,22 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
         keywords['xml_converter'] = findConverter(
             config.get('OGRETOOLS_XML_CONVERTER'))
 
-        print('converter', keywords['xml_converter'])
+        if not keywords['xml_converter']:
+            self.report({'ERROR'}, "OgreXMLConverter not found. Set path in Addon Preferences.")
+            return {'CANCELLED'}
+        
+        try:
+            result = OgreImport.load(self, context, **keywords)
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to import: {e}")
+            return {'CANCELLED'}
 
-        bpy.context.window.cursor_set("WAIT")
-        result = OgreImport.load(self, context, **keywords)
-        bpy.context.window.cursor_set("DEFAULT")
         return result
 
     def draw(self, context):
         layout = self.layout
 
         layout.prop(self, "keep_xml")
-        layout.prop(self, "import_autosmooth")
         layout.prop(self, "import_normals")
         layout.prop(self, "import_shapekeys")
 
@@ -290,12 +271,12 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
         layout.prop(self, "import_animations")
 
         rate = layout.column()
-        rate.enabled = self.import_animations
+        rate.enabled = bool(self.import_animations)
         rate.prop(self, "round_frames")
 
-###############################################################################
-
-
+# ---------------------------------------------------------------------------
+# Export Operator
+# ---------------------------------------------------------------------------
 class ExportOgre(bpy.types.Operator, ExportHelper):
     '''Export a Torchlight MESH File'''
 
@@ -305,87 +286,87 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
 
     filename_ext = ".mesh"
 
-    export_edgelists = BoolProperty(
+    export_edgelists: BoolProperty(
         name="Export edge lists",
         description="Export edge list data for the mesh",
         default=False,
     )
 
-    export_tangents = BoolProperty(
+    export_tangents: BoolProperty(
         name="Export tangents",
         description="Export tangent data for the mesh",
         default=False,
     )
-    tangent_parity = BoolProperty(
+    tangent_parity: BoolProperty(
         name="   Parity in W",
         description="Tangents have parity stored in the W component",
         default=False,
     )
 
-    export_binormals = BoolProperty(
+    export_binormals: BoolProperty(
         name="Export Binormals",
         description="Generate binormals for the mesh",
         default=False,
     )
 
-    export_colour = BoolProperty(
+    export_colour: BoolProperty(
         name="Export colour",
         description="Export vertex colour data. Name a colour layer"
                     " 'Alpha' to use as the alpha component",
         default=False,
     )
 
-    enable_by_material = BoolProperty(
+    enable_by_material: BoolProperty(
         name="Enable By Material",
         description="Multiple materials on a mesh will be exported as"
                     " submeshes",
         default=False,
     )
 
-    keep_xml = BoolProperty(
+    keep_xml: BoolProperty(
         name="Keep XML",
         description="Keeps the XML file when converting to .MESH",
         default=False,
     )
 
-    apply_transform = BoolProperty(
+    apply_transform: BoolProperty(
         name="Apply Transform",
         description="Applies object's transformation to its data",
         default=False,
     )
 
-    apply_modifiers = BoolProperty(
+    apply_modifiers: BoolProperty(
         name="Apply Modifiers",
         description="Applies modifiers to the mesh",
         default=False,
     )
 
-    export_poses = BoolProperty(
+    export_poses: BoolProperty(
         name="Export shape keys",
         description="Export shape keys as poses",
         default=False,
     )
 
-    export_materials = BoolProperty(
+    export_materials: BoolProperty(
         name="Export materials",
         description="Export material files",
         default=False,
     )
 
-    overwrite_material = BoolProperty(
+    overwrite_material: BoolProperty(
         name="Overwrite material",
         description="Overwrites existing .material file, if present",
         default=False,
     )
 
-    copy_textures = BoolProperty(
+    copy_textures: BoolProperty(
         name="Copy textures",
         description="Copies material source textures to material file"
                     " location",
         default=False,
     )
 
-    export_skeleton = BoolProperty(
+    export_skeleton: BoolProperty(
         name="Export skeleton",
         description="Exports new skeleton and links the mesh to this new"
                     " skeleton.\nLeave off to link with existing skeleton"
@@ -393,7 +374,7 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
         default=False,
     )
 
-    export_bonesort = EnumProperty(
+    export_bonesort: EnumProperty(
         name="Sorting",
         description="Choose the sorting method to use for the bones",
         items=(
@@ -404,14 +385,14 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
         default='ALPHA'
     )
 
-    export_animation = BoolProperty(
+    export_animation: BoolProperty(
         name="Export Animation",
         description="Export all actions attached to the selected skeleton"
                     " as animations",
         default=False,
     )
 
-    filter_glob = StringProperty(
+    filter_glob: StringProperty(
         default="*.mesh;*.MESH;.xml;.XML",
         options={'HIDDEN'},
     )
@@ -460,9 +441,9 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
         skeleton.prop(self, "export_animation")
         skeleton.prop(self, "export_bonesort")
 
-###############################################################################
-
-
+# ---------------------------------------------------------------------------
+# Menu Registration
+# ---------------------------------------------------------------------------
 def menu_func_import(self, context):
     self.layout.operator(ImportOgre.bl_idname, text="Torchlight OGRE (.mesh)")
 
@@ -477,35 +458,36 @@ classes = (
     ExportOgre
 )
 
-
+# ---------------------------------------------------------------------------
+# Registration / Unregistration
+# ---------------------------------------------------------------------------
 def register():
-    logging.info('Starting io_ogre_TL %s', bl_info["version"])
     for cls in classes:
         bpy.utils.register_class(cls)
 
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+    # Copy the saved extension preference (if set) into CONFIG so import/export use it.
+    config.sync_preferences_to_config()
+
+    if hasattr(bpy.types, 'TOPBAR_MT_file_import'):
         bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
         bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
     else:
         bpy.types.INFO_MT_file_import.append(menu_func_import)
         bpy.types.INFO_MT_file_export.append(menu_func_export)
 
-    # read user preferences
-    config.update_from_addon_preference(bpy.context)
-
 
 def unregister():
-    logging.info('Unloading io_ogre_TL %s', bl_info["version"])
-    for cls in reversed(classes):
-        bpy.utils.unregister_class(cls)
-
-    if hasattr(bpy.app, "version") and bpy.app.version >= (2, 80):
+    if hasattr(bpy.types, 'TOPBAR_MT_file_import'):
         bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
         bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     else:
         bpy.types.INFO_MT_file_import.remove(menu_func_import)
         bpy.types.INFO_MT_file_export.remove(menu_func_export)
 
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
+
 
 if __name__ == "__main__":
     register()
+
