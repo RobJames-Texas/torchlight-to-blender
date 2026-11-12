@@ -1,11 +1,10 @@
-import operator
 import subprocess
 import os
 import math
 from mathutils import Vector, Matrix
 import bpy
 from xml.dom import minidom
-from functools import reduce
+from bpy_extras.anim_utils import action_ensure_channelbag_for_slot
 
 SHOW_IMPORT_DUMPS = False
 SHOW_IMPORT_TRACE = False
@@ -39,9 +38,6 @@ def GetValidBlenderName(name):
 
 
 
-
-def matmul(matracies):
-    return reduce((lambda x, y: operator.matmul(x, y)), matracies)
 
 
 def xOpenFile(filename):
@@ -187,140 +183,99 @@ def xCollectMeshData(meshData, xmldoc, meshname, dirname, useNormals):
 
 
 def xCollectMaterialData(meshData, materialFiles, folder):
-    data = None
-    if len(materialFiles) == 1:
-        materialFile = materialFiles[0]
-        try:
-            filein = open(materialFile)
-        except Exception:
-            print("WARNING: Material: File", materialFile, "not found!")
-            return 'None'
-        data = filein.readlines()
-        filein.close()
+    data = []
+    
+    # Unpack file lists smoothly
+    if isinstance(materialFiles, (list, tuple)):
+        target_files = materialFiles
     else:
-        # we have multiple material files, so check them for required materials
-        # pick one material from meshData
-        if(len(meshData['submeshes']) > 0):
-            # take only first material
-            firstMaterial = meshData['submeshes'][0]['materialOrg']
+        target_files = [materialFiles] if materialFiles else []
 
-            materialFound = False
-            for matFile in materialFiles:
-                try:
-                    filein = open(matFile)
-                except Exception:
-                    print("WARNING: Material: File", matFile, "not found!")
-                    return 'None'
-                data = filein.readlines()
-                filein.close()
-                # try to find material name in file
-                materialFound = False
-                for line in data:
-                    if firstMaterial in line:
-                        materialFound = True
-                        break
+    for matFile in target_files:
+        if matFile and os.path.isfile(matFile):
+            try:
+                with open(matFile, 'r', errors='ignore') as filein:
+                    data.extend(filein.readlines())
+            except Exception as e:
+                print("WARNING: Material file could not be read:", matFile, e)
 
-                if materialFound:
-                    print("Material '%s' found in '%s'" %
-                          (firstMaterial, matFile))
-                    break
-            # material is not found at all
-            if not materialFound:
-                data = None
-
-    MaterialDic = {}
     allMaterials = {}
+    
+    # -------------------------------------------------------------
+    # STRUCTURAL BLOCK TOKENIZER (Bypasses all tab & line breaks)
+    # -------------------------------------------------------------
+    # 1. Clean the entire file text down into flat, sequential space-separated tokens
+    clean_text = " "
+    for line in data:
+        # Strip comments
+        if line.strip().startswith("//") or line.strip().startswith("#"):
+            continue
+        # Ensure symbols are padded with spaces so splitting keeps them isolated
+        formatted_line = line.replace("{", " { ").replace("}", " } ")
+        clean_text += formatted_line + " "
+        
+    tokens = clean_text.split()
+    
+    # 2. Walk the token stack structurally
+    i = 0
+    while i < len(tokens):
+        if tokens[i].lower() == "material" and (i + 1) < len(tokens):
+            raw_mat_name = tokens[i+1].strip('"')
+            mat_name = GetValidBlenderName(raw_mat_name)
+            
+            # Sub-parse everything strictly locked inside this specific material's scope
+            allMaterials[mat_name] = {}
+            brace_depth = 0
+            
+            # Read tokens ahead until this material block closes
+            j = i + 2
+            while j < len(tokens):
+                token_lower = tokens[j].lower()
+                
+                if token_lower == "{":
+                    brace_depth += 1
+                elif token_lower == "}":
+                    brace_depth -= 1
+                    if brace_depth <= 0: # Material block closed completely
+                        i = j
+                        break
+                        
+                # Directly grab our properties regardless of nested technique/pass depth!
+                # Keep only the first texture unit (diffuse); later ones are normal/specular maps.
+                elif (token_lower == "texture" and (j + 1) < len(tokens)
+                        and 'texture' not in allMaterials[mat_name]):
+                    img_name = tokens[j+1].strip('"')
+                    full_path = os.path.join(folder, img_name)
+                    
+                    # Extension fallback protection
+                    if not os.path.isfile(full_path):
+                        base = os.path.splitext(full_path)[0]
+                        for fallback_ext in ['.png', '.PNG', '.dds', '.DDS', '.jpg', '.JPG', '.tga', '.TGA']:
+                            if os.path.isfile(base + fallback_ext):
+                                full_path = base + fallback_ext
+                                img_name = os.path.basename(full_path)
+                                break
+                                
+                    allMaterials[mat_name]['texture'] = full_path
+                    allMaterials[mat_name]['imageNameOnly'] = img_name
+                    
+                elif token_lower == "diffuse" and (j + 3) < len(tokens):
+                    try: allMaterials[mat_name]['diffuse'] = [float(tokens[j+1]), float(tokens[j+2]), float(tokens[j+3])]
+                    except ValueError: pass
+                elif token_lower == "ambient" and (j + 3) < len(tokens):
+                    try: allMaterials[mat_name]['ambient'] = [float(tokens[j+1]), float(tokens[j+2]), float(tokens[j+3])]
+                    except ValueError: pass
+                elif token_lower == "specular" and (j + 3) < len(tokens):
+                    try: allMaterials[mat_name]['specular'] = [float(tokens[j+1]), float(tokens[j+2]), float(tokens[j+3])]
+                    except ValueError: pass
+                elif token_lower == "emissive" and (j + 3) < len(tokens):
+                    try: allMaterials[mat_name]['emissive'] = [float(tokens[j+1]), float(tokens[j+2]), float(tokens[j+3])]
+                    except ValueError: pass
+                
+                j += 1
+        i += 1
 
-    # no material data, so just return
-    if data is not None:
-        count = 0
-        for line in data:
-            if "material" in line:
-                MaterialName = line.split()[1]
-                # to avoid Blender naming limit problems
-                MaterialName = GetValidBlenderName(MaterialName)
-                MaterialDic[MaterialName] = []
-                count = 0
-            if "{" in line:
-                count += 1
-            if count > 0:
-                MaterialDic[MaterialName].append(line)
-            if "}" in line:
-                count -= 1
-
-        # print(MaterialDic)
-        for Material in MaterialDic.keys():
-            count = 0
-            matDict = {}
-            allMaterials[Material] = matDict
-            if SHOW_IMPORT_TRACE:
-                print("Materialname: ", Material)
-            for line in MaterialDic[Material]:
-                if "{" in line:
-                    count += 1
-                # texture
-                if ((count > 0)
-                        and ("texture " in line)
-                        and ('texture' not in matDict)):
-                    imageName = (line.split()[1])
-                    file = os.path.join(folder, imageName)
-                    if(not os.path.isfile(file)):
-                        # just force to use .dds if there isn't file specified
-                        # in material file
-                        file = os.path.join(folder, os.path.splitext(
-                            (line.split()[1]))[0] + ".dds")
-                        if(os.path.isfile(file)):
-                            matDict['texture'] = file
-                            matDict['imageNameOnly'] = imageName
-                        else:
-                            print(
-                                "WARNING: Referenced texture '%s' not found"
-                                % file)
-                    else:
-                        matDict['texture'] = file
-                        matDict['imageNameOnly'] = imageName
-                # ambient color
-                if(count > 0) and ("ambient" in line):
-                    lineSplit = line.split()
-                    if len(lineSplit) >= 4:
-                        r = float(lineSplit[1])
-                        g = float(lineSplit[2])
-                        b = float(lineSplit[3])
-                        matDict['ambient'] = [r, g, b]
-                # diffuse color
-                if(count > 0) and ("diffuse" in line):
-                    lineSplit = line.split()
-                    if len(lineSplit) >= 4:
-                        r = float(lineSplit[1])
-                        g = float(lineSplit[2])
-                        b = float(lineSplit[3])
-                        matDict['diffuse'] = [r, g, b]
-
-                # specular color
-                if(count > 0) and ("specular" in line):
-                    lineSplit = line.split()
-                    if len(lineSplit) >= 4:
-                        r = float(lineSplit[1])
-                        g = float(lineSplit[2])
-                        b = float(lineSplit[3])
-                        matDict['specular'] = [r, g, b]
-
-                # emissive color
-                if(count > 0) and ("emissive" in line):
-                    lineSplit = line.split()
-                    if len(lineSplit) >= 4:
-                        r = float(lineSplit[1])
-                        g = float(lineSplit[2])
-                        b = float(lineSplit[3])
-                        matDict['emissive'] = [r, g, b]
-
-                if "}" in line:
-                    count -= 1
-
-    # store it into meshData
     meshData['materials'] = allMaterials
-    if SHOW_IMPORT_TRACE:
-        print("allMaterials: %s" % allMaterials)
 
 
 def xCollectBoneAssignments(meshData, xmldoc):
@@ -515,8 +470,7 @@ def calcBoneHeadPositions(BonesData):
 
                 protmat = Matrix.Rotation(prot[3], 3, Vector(
                     [prot[0], prot[1], prot[2]])).inverted()
-                newposh = matmul([protmat.transposed(),
-                                 Vector([posh[0], posh[1], posh[2]])])  # 03
+                newposh = protmat.transposed() @ Vector([posh[0], posh[1], posh[2]])  # 03
                 positionh = VectorSum(ppos, newposh)
 
                 posh = positionh
@@ -529,50 +483,41 @@ def calcBoneHeadPositions(BonesData):
 
 
 def calcBoneRotations(BonesDic):
-    objDic = {}
-    scn = bpy.context.scene
-    for bone in BonesDic.keys():
-        obj = bpy.data.objects.new(bone, None)
-        objDic[bone] = obj
-        # scn.objects.link(obj)
-        addObjectToScene(bpy.context, obj)
-    # print("all objects created")
-    # print(bpy.data.objects)
-    for bone in BonesDic.keys():
-        if 'parent' in BonesDic[bone]:
-            Parent = objDic.get(BonesDic[bone]['parent'])
-            object = objDic.get(bone)
-            object.parent = Parent
-    # print("all parents linked")
-    for bone in BonesDic.keys():
-        obj = objDic.get(bone)
-        rot = BonesDic[bone]['rotation']
-        loc = BonesDic[bone]['position']
-        euler = Matrix.Rotation(rot[3], 3, Vector(
-            [rot[0], -rot[2], rot[1]])).to_euler()
-        obj.location = [loc[0], -loc[2], loc[1]]
-        obj.rotation_euler = [euler[0], euler[1], euler[2]]  # 02
-    # Redraw()
-    scnUpdate()
+    #  FIXED FOR 5.x: Pure memory-space matrix calculations. Zero object/scene pollution!
+    from mathutils import Matrix, Vector
+    
+    # Step 1: Compute local matrices for each bone
+    local_matrices = {}
+    for bone, data in BonesDic.items():
+        rot = data['rotation']
+        loc = data['position']
+        
+        # Build local translation and rotation components
+        translation = Vector((loc[0], -loc[2], loc[1]))
+        rotation_matrix = Matrix.Rotation(rot[3], 3, Vector((rot[0], -rot[2], rot[1]))).to_4x4()
+        
+        # Combine into a single local transform matrix
+        mat = rotation_matrix
+        mat.col[3][0:3] = translation
+        local_matrices[bone] = mat
 
-    # print("all objects rotated")
-    for bone in BonesDic.keys():
-        obj = objDic.get(bone)
-        # TODO: need to get rotation matrix out of objects rotation
-        # loc, rot, scale = obj.matrix_local.decompose()
-        loc, rot, scale = obj.matrix_world.decompose()  # 02
-        rotmatAS = rot.to_matrix()
-        # print(rotmatAS)
-        BonesDic[bone]['rotmatAS'] = rotmatAS
-    # print("all matrices stored")
-
-    # TODO cyclic
-    for bone in BonesDic.keys():
-        obj = objDic.get(bone)
-        removeObjectFromScene(bpy.context, obj)
-        bpy.data.objects.remove(obj)
-
-    scnUpdate()
+    # Step 2: Traverse hierarchies to compute world rotation matrices
+    for bone, data in BonesDic.items():
+        # Walk up the parent chain to calculate the final world transformation matrix
+        current_bone = bone
+        world_matrix = Matrix.Identity(4)
+        chain = []
+        
+        while current_bone:
+            chain.append(current_bone)
+            current_bone = BonesDic[current_bone].get('parent')
+            
+        # Multiply down from root down to the leaf bone
+        for b in reversed(chain):
+            world_matrix = world_matrix @ local_matrices[b]
+            
+        # Extract the pure 3x3 orientation matrix block and save it
+        data['rotmatAS'] = world_matrix.to_3x3()
 
 
 def VectorSum(vec1, vec2):
@@ -696,16 +641,17 @@ def bCreateAnimations(meshData):
         fix2 = Matrix([(0, 1, 0), (0, 0, 1), (1, 0, 0)])
         for bone in rig.pose.bones:
             if bone.parent:
-                mat[bone.name] = \
-                    matmul([fix2,
-                           bone.parent.matrix.to_3x3().transposed(),
-                           bone.matrix.to_3x3()])
+                mat[bone.name] = fix2 @ bone.parent.matrix.to_3x3().transposed() @ bone.matrix.to_3x3()
             else:
-                mat[bone.name] = matmul([fix1, bone.matrix.to_3x3()])
+                mat[bone.name] = fix1 @ bone.matrix.to_3x3()
 
         for name in sorted(meshData['animations'].keys(), reverse=True):
             action = bpy.data.actions.new(name)
             print("Created action", name)
+            # Blender 5.x slotted actions: F-curves live in a channelbag
+            slot = action.slots.new(id_type='OBJECT', name=rig.name)
+            channelbag = action_ensure_channelbag_for_slot(action, slot)
+            groups = {}
 
             # iterate target bones
             for target in meshData['animations'][name]:
@@ -735,9 +681,11 @@ def bCreateAnimations(meshData):
                     if data[i]:
                         path = bone.path_from_id(path_id[i])
                         for channel in range(len(data[i][0][1])):
-                            curve = action.fcurves.new(data_path=path,
-                                                       index=channel,
-                                                       action_group=bone.name)
+                            if bone.name not in groups:
+                                groups[bone.name] = channelbag.groups.new(bone.name)
+                            curve = channelbag.fcurves.new(data_path=path,
+                                                           index=channel)
+                            curve.group = groups[bone.name]
                             for key in data[i]:
                                 curve.keyframe_points.insert(key[0],
                                                              key[1][channel])
@@ -746,18 +694,19 @@ def bCreateAnimations(meshData):
             track = animdata.nla_tracks.new()
             track.name = name
             track.mute = True
-            track.strips.new(name, 0, action)
+            strip = track.strips.new(name, 0, action)
+            strip.action_slot = slot
 
 ###############################################################################
 
 
-def bCreateMesh(meshData, folder, name, filepath, useAutoSmooth):
+def bCreateMesh(meshData, folder, name, filepath):
     if 'skeleton' in meshData:
         skeletonName = meshData['skeletonName']
         bCreateSkeleton(meshData, skeletonName)
 
     # from collected data create all sub meshes
-    subObjs = bCreateSubMeshes(meshData, name, useAutoSmooth)
+    subObjs = bCreateSubMeshes(meshData, name)
 
     # Move to parent skeleton if there
     if 'armature' in meshData:
@@ -792,14 +741,11 @@ def bCreateSkeleton(meshData, name):
     rig.display_type = 'WIRE'
 
     # Link object to scene
-    scn = bpy.context.scene
-    # scn.objects.link(rig)
     addObjectToScene(bpy.context, rig)
-    # scn.objects.active = rig
     setActiveObject(bpy.context, rig)
     scnUpdate()
 
-    # Chose default length of bones with no children
+    # Choose default length of bones with no children
     averageBone = 0
     for b in bonesData.values():
         childLength = b['position'][0]
@@ -809,7 +755,10 @@ def bCreateSkeleton(meshData, name):
         averageBone = 0.2
     print("Default bone length:", averageBone)
 
+    # ENTER EDIT MODE EXACTLY ONCE
     bpy.ops.object.mode_set(mode='EDIT')
+    
+    # 1. Generate bone geometry and transformations
     for bone in bonesData.keys():
         boneData = bonesData[bone]
         boneName = boneData['name']
@@ -822,8 +771,6 @@ def bCreateSkeleton(meshData, name):
             boneObj['OGREID'] = boneData['id']
             print('bone', boneData['id'], boneName)
 
-        # boneObj.head = boneData['posHAS']
-        # headPos = boneData['posHAS']
         headPos = boneData['posHAS']
         tailVector = 0
         if len(children) > 0:
@@ -833,7 +780,7 @@ def bCreateSkeleton(meshData, name):
             tailVector = averageBone
 
         rotmat = boneData['rotmatAS']
-        # this is a way of flipping matrix for Blender 4.2+
+        # Matrix orientation flip logic for structural matching
         r0 = [rotmat.col[0].x] + [rotmat.col[0].y] + [rotmat.col[0].z]
         r1 = [rotmat.col[1].x] + [rotmat.col[1].y] + [rotmat.col[1].z]
         r2 = [rotmat.col[2].x] + [rotmat.col[2].y] + [rotmat.col[2].z]
@@ -846,30 +793,31 @@ def bCreateSkeleton(meshData, name):
         boneObj.transform(boneRotMatrix)
         boneObj.translate(Vector([headPos[0], -headPos[2], headPos[1]]))
 
-    # only after all bones are created we can link parents
+    # 2. Link parent structural relationships immediately
     for bone in bonesData.keys():
         boneData = bonesData[bone]
-        parent = None
         if 'parent' in boneData.keys():
             parent = boneData['parent']
-            # get bone obj
-            boneData = bonesData[bone]
             boneName = boneData['name']
             boneObj = amt.edit_bones[boneName]
             boneObj.parent = amt.edit_bones[parent]
 
-    # need to refresh armature before removing bones
-    bpy.ops.object.mode_set(mode='OBJECT')
-    bpy.ops.object.mode_set(mode='EDIT')
+    # 3. Clean up helper/zero bones safely within the same EDIT mode block
+    for bone_name in list(amt.edit_bones.keys()):
+        if bone_name in bonesData and 'flag' in bonesData[bone_name].keys():
+            bone_to_remove = amt.edit_bones.get(bone_name)
+            if bone_to_remove:
+                amt.edit_bones.remove(bone_to_remove)
 
-    # delete helper/zero bones
-    for bone in amt.bones.keys():
-        # print("keys of bone=%s" % bonesData[bone].keys())
-        if 'flag' in bonesData[bone].keys():
-            # print ("deleting bone=%s" % bone)
-            bpy.context.object.data.edit_bones.remove(amt.edit_bones[bone])
+    #  STABILIZATION FOR 5.x: Ensure armature data updates fully inside C++ memory pools
+    bpy.context.view_layer.update()
 
-    bpy.ops.object.mode_set(mode='OBJECT')
+    # EXIT EDIT MODE SAFELY
+    if bpy.context.object and bpy.context.object.mode == 'EDIT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+        
+    # Finalize view layers so the mesh loop inherits a stable workspace
+    bpy.context.view_layer.update()
 
 
 def bMergeVertices(subMesh):
@@ -897,7 +845,7 @@ def bMergeVertices(subMesh):
             face[i] = map[face[i]]
 
 
-def bCreateSubMeshes(meshData, meshName, useAutoSmooth):
+def bCreateSubMeshes(meshData, meshName):
     allObjects = []
     submeshes = meshData['submeshes']
     scene = bpy.context.scene
@@ -907,268 +855,209 @@ def bCreateSubMeshes(meshData, meshName, useAutoSmooth):
         subMeshData = submeshes[subMeshIndex]
         subMeshName = subMeshData['material']
 
-        # Create mesh and object
-        me = bpy.data.meshes.new(subMeshName)
-        ob = bpy.data.objects.new(subMeshName, me)
-        # Link object to scene
-        scene.collection.objects.link(ob)
-        layer.objects.active = ob
-        layer.update()
-
-        # check for submesh geometry, or take the shared one
         if 'geometry' in subMeshData.keys():
             geometry = subMeshData['geometry']
         else:
             geometry = meshData['sharedgeometry']
 
-        verts = geometry['positions']
-        faces = subMeshData['faces']
-        hasNormals = False
-        if 'normals' in geometry.keys():
-            normals = geometry['normals']
-            hasNormals = True
+        raw_verts = geometry['positions']
+        raw_faces = subMeshData['faces']
+        
+        hasNormals = 'normals' in geometry.keys()
+        raw_normals = geometry['normals'] if hasNormals else []
 
-        # mesh vertices and faces
-        VertLength = len(verts)
-        FaceLength = len(faces)
-        me.vertices.add(VertLength)
-        me.loops.add(FaceLength * 3)
-        me.polygons.add(FaceLength)
-        for i in range(VertLength):
-            me.vertices[i].co = verts[i]
-            if hasNormals:
-                me.vertices[i].normal = Vector((normals[i][0],
-                                                normals[i][1],
-                                                normals[i][2]))
+        # Extract only the vertices utilized by the current submesh's faces
+        used_indices = sorted(list(set(v for face in raw_faces for v in face)))
+        index_map = {old_idx: new_idx for new_idx, old_idx in enumerate(used_indices)}
+        
+        verts = [raw_verts[idx] for idx in used_indices]
+        faces = [[index_map[v] for v in face] for face in raw_faces]
+        normals = [raw_normals[idx] for idx in used_indices] if hasNormals else []
 
-        for i in range(FaceLength):
-            me.loops[i*3].vertex_index = faces[i][0]
-            me.loops[i*3+1].vertex_index = faces[i][1]
-            me.loops[i*3+2].vertex_index = faces[i][2]
-            me.polygons[i].loop_start = i*3
-            me.polygons[i].loop_total = 3
-            me.polygons[i].use_smooth
+        # Instantiate our tight mesh object
+        me = bpy.data.meshes.new(subMeshName)
+        ob = bpy.data.objects.new(subMeshName, me)
+        scene.collection.objects.link(ob)
+        layer.objects.active = ob
+        layer.update()
 
-        hasTexture = False
-        # material for the submesh
-        # Create image texture from image.
-        if subMeshName in meshData['materials']:
-            matInfo = meshData['materials'][subMeshName]  # material data
-            if 'texture' in matInfo:
-                texturePath = matInfo['texture']
-                if texturePath:
-                    hasTexture = True
-                    # try to find among already loaded images
-                    loadedImage = None
-                    for img in bpy.data.images:
-                        if img.name == matInfo['imageNameOnly']:
-                            loadedImage = img
-                            break
-                    if not loadedImage and texturePath:
-                        loadedImage = bpy.data.images.load(texturePath)
+        me.from_pydata(verts, [], faces)
+        me.validate()
+        me.update()
 
-            # Create shadeless material and MTex
+        # Run safe case-insensitive mapping lookups against our clean materials cache
+        matInfo = None
+        materials_dict = meshData.get('materials', {})
+        for key in materials_dict.keys():
+            if key.lower().strip() == subMeshName.lower().strip():
+                matInfo = materials_dict[key]
+                break
+
+        if matInfo:
             mat = bpy.data.materials.new(subMeshName)
             mat.use_nodes = True
-            bsdf = mat.node_tree.nodes.get('ShaderNodeBsdfPrincipled')
-            if bsdf is None:
-                bsdf = mat.node_tree.nodes.new(type='ShaderNodeBsdfPrincipled')
+            nodes = mat.node_tree.nodes
+            links = mat.node_tree.links
 
-            # ambient
-            # if 'ambient' in matInfo:  # no AO in eevee
-            #     mat.ambient = matInfo['ambient'][0]
-            # diffuse
+            nodes.clear()
+
+            output_node = nodes.new(type='ShaderNodeOutputMaterial')
+            output_node.location = (300, 0)
+            
+            bsdf = nodes.new(type='ShaderNodeBsdfPrincipled')
+            bsdf.location = (0, 0)
+
+            # Link our main shader directly to the Material Output
+            links.new(bsdf.outputs['BSDF'], output_node.inputs['Surface'])
+
             if 'diffuse' in matInfo:
-                # mat.diffuse_color = matInfo['diffuse']
                 r, g, b = matInfo['diffuse']
                 bsdf.inputs['Base Color'].default_value = [r, g, b, 1]
-            # specular
             if 'specular' in matInfo:
-                # this didn't look right
-                # r, g, b = matInfo['specular']
-                # gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
-                bsdf.inputs['Specular'].default_value = 0
-            # mat.use_shadeless = True
-            node_texture = mat.node_tree.nodes.new(type='ShaderNodeTexImage')
-            node_texture.name = 'DiffuseTexture'
-            node_texture.location = -300, 0
-            # mtex = mat.texture_slots.add()
-            if hasTexture and loadedImage:
-                # mtex.texture = tex
-                node_texture.image = loadedImage
-            links = mat.node_tree.links
-            links.new(node_texture.outputs[0], bsdf.inputs[0])
-            # mtex.texture_coords = 'UV'
-            # mtex.use_map_color_diffuse = True
-            uvmap = mat.node_tree.nodes.new(type='ShaderNodeUVMap')
-            uvmap.uv_map = 'UVLayer0'
-            links.new(uvmap.outputs['UV'], node_texture.inputs['Vector'])
+                bsdf.inputs['Specular IOR Level'].default_value = 0
 
-            # emmisive
+            # Generate the texture sampling pipeline nodes
+            if 'texture' in matInfo:
+                node_texture = mat.node_tree.nodes.new(type='ShaderNodeTexImage')
+                node_texture.name = 'DiffuseTexture'
+                node_texture.location = (-300, 0)
+                
+                texturePath = matInfo['texture']
+                if texturePath and os.path.isfile(texturePath):
+                    try:
+                        node_texture.image = bpy.data.images.load(texturePath)
+                        if node_texture.image:
+                            node_texture.image.colorspace_settings.name = 'sRGB'
+                    except Exception as e:
+                        print(f"Warning: Could not read image file: {e}")
+
+                # Establish material mapping node links safely
+                if len(node_texture.outputs) > 0 and 'Base Color' in bsdf.inputs:
+                    links.new(node_texture.outputs[0], bsdf.inputs['Base Color'])
+
+                uvmap = mat.node_tree.nodes.new(type='ShaderNodeUVMap')
+                uvmap.uv_map = 'UVLayer0'
+                #links.new(uvmap.outputs['UV'], node_texture.inputs['Vector'])
+                if len(uvmap.outputs) > 0 and len(node_texture.inputs) > 0:
+                    links.new(uvmap.outputs[0], node_texture.inputs[0])
+            
             if 'emissive' in matInfo:
                 er, eg, eb = matInfo['emissive']
-                bsdf.inputs['Emission'].default_value = [0, 0, 0, 1]
+                bsdf.inputs['Emission Color'].default_value = [er, eg, eb, 1]
 
-                sepRgb = mat.node_tree.nodes.new(type='ShaderNodeSeparateRGB')
-                links.new(node_texture.outputs['Color'],
-                          sepRgb.inputs['Image'])
+                sepRgb = mat.node_tree.nodes.new(type='ShaderNodeSeparateColor')
+                links.new(node_texture.outputs['Color'], sepRgb.inputs['Color'])
+                
                 rChan = mat.node_tree.nodes.new(type='ShaderNodeEmission')
-                rChan.name = 'EmissionR'
                 rChan.inputs['Strength'].default_value = er
-                links.new(sepRgb.outputs['R'], rChan.inputs['Color'])
+                links.new(sepRgb.outputs['Red'], rChan.inputs['Color'])
                 rShade = mat.node_tree.nodes.new(type='ShaderNodeShaderToRGB')
                 links.new(rChan.outputs[0], rShade.inputs[0])
 
                 gChan = mat.node_tree.nodes.new(type='ShaderNodeEmission')
                 gChan.name = 'EmissionG'
                 gChan.inputs['Strength'].default_value = eg
-                links.new(sepRgb.outputs['G'], gChan.inputs['Color'])
+                links.new(sepRgb.outputs['Green'], gChan.inputs['Color'])
                 gShade = mat.node_tree.nodes.new(type='ShaderNodeShaderToRGB')
                 links.new(gChan.outputs[0], gShade.inputs[0])
 
                 bChan = mat.node_tree.nodes.new(type='ShaderNodeEmission')
                 bChan.name = 'EmissionB'
                 bChan.inputs['Strength'].default_value = eb
-                links.new(sepRgb.outputs['B'], bChan.inputs['Color'])
+                links.new(sepRgb.outputs['Blue'], bChan.inputs['Color'])
                 bShade = mat.node_tree.nodes.new(type='ShaderNodeShaderToRGB')
                 links.new(bChan.outputs[0], bShade.inputs[0])
 
-                combineRGB = mat.node_tree.nodes.new(
-                    type='ShaderNodeCombineRGB')
-                links.new(rShade.outputs['Color'], combineRGB.inputs['R'])
-                links.new(gShade.outputs['Color'], combineRGB.inputs['G'])
-                links.new(bShade.outputs['Color'], combineRGB.inputs['B'])
-                links.new(combineRGB.outputs['Image'], bsdf.inputs['Emission'])
+                combineRGB = mat.node_tree.nodes.new(type='ShaderNodeCombineColor')
+                links.new(rShade.outputs['Color'], combineRGB.inputs['Red'])
+                links.new(gShade.outputs['Color'], combineRGB.inputs['Green'])
+                links.new(bShade.outputs['Color'], combineRGB.inputs['Blue'])
+                links.new(combineRGB.outputs['Color'], bsdf.inputs['Emission Color'])
 
-            # add material to object
             ob.data.materials.append(mat)
 
-        # texture coordinates
+        # UV Coordinates assignments
         if 'texcoordsets' in geometry and 'uvsets' in geometry:
             uvsets = geometry['uvsets']
             for j in range(geometry['texcoordsets']):
-                uvData = me.uv_layers.add(name='UVLayer'+str(j)).data
-                loopIndex = 0
-                for face in faces:
-                    for v in face:
-                        uvData[loopIndex].uv = uvsets[v][j]
-                        loopIndex += 1
+                uvData = me.uv_layers.new(name='UVLayer'+str(j)).data
+                for loop_idx, loop in enumerate(me.loops):
+                    v_old = used_indices[loop.vertex_index]
+                    if v_old < len(uvsets):
+                        uvData[loop_idx].uv = uvsets[v_old][j]
 
-        # vertex colors
+        # Vertex Color Attributes assignments
         if 'vertexcolors' in geometry:
-            colourData = me.color_attributes.new('Colour'+str(j), type='COLOR').data
+            colour_layer = me.color_attributes.new(name='Colour0', type='FLOAT_COLOR', domain='CORNER')
+            colourData = colour_layer.data
             vcolors = geometry['vertexcolors']
-            loopIndex = 0
-            for face in faces:
-                for v in face:
-                    colourData[loopIndex].color = vcolors[v]
-                    loopIndex += 1
+            for loop_idx, loop in enumerate(me.loops):
+                v_old = used_indices[loop.vertex_index]
+                if v_old < len(vcolors):
+                    colourData[loop_idx].color = vcolors[v_old]
 
-            # Vertex Alpha
-            for c in vcolors:
-                if c[3] != 1.0:
-                    alphaData = me.color_attributes.new('Alpha'+str(j), type='COLOR').data
-                    loopIndex = 0
-                    for face in faces:
-                        for v in face:
-                            colourData[loopIndex].color[3] = vcolors[v][3]
-                            loopIndex += 1
-                    break
+        # Vertex group weight mapping
+        if 'boneIDs' in meshData and 'boneassignments' in geometry.keys():
+            vgroups = geometry['boneassignments']
+            for vgname, vgroup in vgroups.items():
+                grp = ob.vertex_groups.new(name=vgname)
+                for (v_old, w) in vgroup:
+                    if v_old in index_map:
+                        grp.add([index_map[v_old]], w, 'REPLACE')
 
-        # bone assignments:
-        if 'boneIDs' in meshData:
-            if 'boneassignments' in geometry.keys():
-                vgroups = geometry['boneassignments']
-                for vgname, vgroup in vgroups.items():
-                    grp = ob.vertex_groups.new(name=vgname)
-                    for (v, w) in vgroup:
-                        grp.add([v], w, 'REPLACE')
-        # Give mesh object an armature modifier, using vertex groups but
-        # not envelopes
         if 'skeleton' in meshData:
             skeletonName = meshData['skeletonName']
             mod = ob.modifiers.new('OgreSkeleton', 'ARMATURE')
-            mod.object = bpy.data.objects[skeletonName]  # gets the rig object
-            mod.use_bone_envelopes = False
-            mod.use_vertex_groups = True
-        elif 'armature' in meshData:
-            mod = ob.modifiers.new('OgreSkeleton', 'ARMATURE')
-            mod.object = meshData['armature']
+            mod.object = bpy.data.objects[skeletonName]
             mod.use_bone_envelopes = False
             mod.use_vertex_groups = True
 
-        # Shape keys (poses)
+        # Shape keys setup
         if 'poses' in meshData:
             base = None
             for pose in meshData['poses']:
                 if(pose['submesh'] == subMeshIndex):
-                    # must have base shape
                     if base is None:
                         base = ob.shape_key_add(name='Basis')
                     name = pose['name']
-                    print('creating pose', name)
                     shape = ob.shape_key_add(name=name)
                     for vkey in pose['data']:
-                        b = base.data[vkey[0]].co
-                        me.shape_keys.key_blocks[name].data[vkey[0]].co = \
-                            [vkey[1] + b[0], vkey[2] + b[1], vkey[3] + b[2]]
+                        # Pose indices refer to the original Ogre vertex array;
+                        # remap to the compacted per-submesh vertex list.
+                        v_idx = index_map.get(vkey[0])
+                        if v_idx is not None and v_idx < len(base.data):
+                            b = base.data[v_idx].co
+                            me.shape_keys.key_blocks[name].data[v_idx].co = \
+                                [vkey[1] + b[0], vkey[2] + b[1], vkey[3] + b[2]]
 
-        # Update mesh with new data
-        # No 'verbose' parameter — Blender 4.2+ always uses the internal default
         me.validate()
         me.update()
 
-        if useAutoSmooth:
-            # me.use_auto_smooth = True
-            ob.data.use_auto_smooth = True
-            ob.data.auto_smooth_angle = 1.5708  # 90 degrees
-        else:
-            for f in me.polygons:
-                f.use_smooth = True
+        # Face smooth configurations
+        me.polygons.foreach_set("use_smooth", [True] * len(me.polygons))
 
-        bpy.ops.object.editmode_toggle()
-        bpy.ops.mesh.remove_doubles(threshold=0.001)
-        bpy.ops.object.editmode_toggle()
-
-        # try to set custom normals
+        # Split custom normals assignment loop
         if hasNormals:
-            noChange = len(me.loops) == len(faces)*3
-            if not noChange:
-                print('Removed',  len(faces) - len(me.loops)/3, 'faces')
             split = []
-            polyIndex = 0
-            for face in faces:
-                if noChange or matchFace(face, verts, me, polyIndex):
-                    polyIndex += 1
-                    for vx in face:
-                        split.append(normals[vx])
+            for loop in me.loops:
+                v = loop.vertex_index
+                if v < len(normals):
+                    n = normals[v]
+                    mag = (n[0]**2 + n[1]**2 + n[2]**2) ** 0.5
+                    if mag > 0.0001:
+                        split.append((n[0]/mag, n[1]/mag, n[2]/mag))
+                    else:
+                        split.append((0.0, 0.0, 1.0))
+                else:
+                    split.append((0.0, 0.0, 1.0))
 
             if len(split) == len(me.loops):
                 me.normals_split_custom_set(split)
-            else:
-                print('Warning: Failed to import mesh normals', polyIndex, '/',
-                      len(me.polygons))
 
+        me.update()
         allObjects.append(ob)
 
     return allObjects
-
-
-def matchFace(face, vertices, mesh, index):
-    if index >= len(mesh.polygons):
-        return False  # ?? err - what broke
-    loop = mesh.polygons[index].loop_start
-    for v in face:
-        vi = mesh.loops[loop].vertex_index
-        vx = mesh.vertices[vi].co
-
-        if (vx-Vector(vertices[v])).length_squared > 1e-6:
-            return False
-
-        # if vx != Vector(vertices[v]):
-        #    return False  # May need threshold ?
-        loop += 1
-    return True
 
 
 def convertXML(convertor, filename, use_existing=True):
@@ -1202,23 +1091,20 @@ def removeObjectFromScene(context, obj):
 
 
 def getBoneNameMapFromArmature(arm):
-    # get ogre bone ids - need to be in edit mode to access edit_bones.
-    # Arm should already be the active object
+    # No mode switches or operators needed. 'OGREID' is set as a custom property
+    # on edit bones during import and persists on the armature's Bone data
+    # (not on pose bones).
     boneMap = {}
 
-    setActiveObject(bpy.context, arm)
-
-    bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
-    bpy.ops.object.mode_set(mode='EDIT', toggle=False)
-    for bone in arm.data.edit_bones:
+    for bone in arm.data.bones:
         if 'OGREID' in bone:
             boneMap[str(bone['OGREID'])] = bone.name
-    bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
+            
     return boneMap
 
 
 def load(operator, context, filepath, xml_converter=None, keep_xml=True,
-         import_autosmooth=False, import_normals=True, import_shapekeys=True,
+         import_normals=True, import_shapekeys=True,
          import_animations=False, round_frames=False,
          use_selected_skeleton=False):
     print("loading", str(filepath))
@@ -1244,16 +1130,16 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
     meshMaterials = []
     nameDotMaterial = onlyName + ".material"
     pathMaterial = os.path.join(folder, nameDotMaterial)
-    if not os.path.isfile(pathMaterial):
-        # search directory for .material
+
+    if os.path.isfile(pathMaterial):
+        #  FIX 1: Ensure your exact-match material file is added to the list!
+        meshMaterials.append(pathMaterial)
+    else:
+        # Search directory for any fallback .material file
         for filename in os.listdir(folder):
-            if ".material" in filename:
-                # material file
+            if filename.lower().endswith(".material"):
                 pathMaterial = os.path.join(folder, filename)
                 meshMaterials.append(pathMaterial)
-                # print("alternative material file: %s" % pathMaterial)
-    else:
-        meshMaterials.append(pathMaterial)
 
     # try to parse xml file
     xDocMeshData = xOpenFile(pathMeshXml)
@@ -1294,7 +1180,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
                     fps = xAnalyseFPS(xDocSkeletonData)
                     if(fps and round_frames):
                         print("Setting FPS to", fps)
-                        bpy.context.scene.render.fps = fps
+                        bpy.context.scene.render.fps = int(round(fps))
                     xCollectAnimations(meshData,
                                        xDocSkeletonData,
                                        round_frames)
@@ -1314,7 +1200,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
 
         # after collecting is done, start creating stuff#
         # create skeleton (if any) and mesh from parsed data
-        bCreateMesh(meshData, folder, onlyName, pathMeshXml, import_autosmooth)
+        bCreateMesh(meshData, folder, onlyName, pathMeshXml)
         bCreateAnimations(meshData)
         if not keep_xml:
             # cleanup by deleting the XML file we created

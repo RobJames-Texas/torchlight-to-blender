@@ -1,12 +1,11 @@
 from xml.dom import minidom
 import bpy
-import operator
+from bpy_extras import anim_utils
 from mathutils import Vector, Matrix
 import math
 import os
 import subprocess
 import shutil
-from functools import reduce
 
 SHOW_EXPORT_DUMPS = False
 SHOW_EXPORT_TRACE = False
@@ -154,15 +153,14 @@ class Skeleton(object):
         # calculate bone rest matrices
         rot = Matrix.Rotation(-1.5707963, 4, 'X')  # Rotate to y-up coordinates
         fix = Matrix.Rotation(1.5707963, 4, 'Z')   # Fix bone axis
-        fix = matmul([fix, Matrix.Rotation(3.141592653, 4, 'X')])
+        fix = fix @ Matrix.Rotation(3.141592653, 4, 'X')
         self.rest = [None] * len(self.bones)
         for i, bone in enumerate(self.bones):
             if bone.parent:
-                self.rest[i] = matmul([matmul([bone.parent.matrix_local,
-                                      fix, rot]).inverted(),
-                                      bone.matrix_local, fix, rot])
+                m_inner = bone.parent.matrix_local @ fix @ rot
+                self.rest[i] = m_inner.inverted() @ bone.matrix_local @ fix @ rot
             else:
-                self.rest[i] = matmul([rot, bone.matrix_local, fix, rot])
+                self.rest[i] = rot @ bone.matrix_local @ fix @ rot
 
             # Change bones list to local structure, due to blender bone
             # structures being cleared if you switch to edit mode again
@@ -220,47 +218,66 @@ class Skeleton(object):
 #########################################
 
 
-def matmul(matracies):
-    return reduce((lambda x, y: operator.matmul(x, y)), matracies)
-
-
 def bCollectAnimationData(meshData):
     if 'skeleton' not in meshData:
         return
     armature = meshData['skeleton'].armature
     animdata = armature.animation_data
     if animdata:
+        # (action, slot) pairs; slotted actions need the slot to be known
         actions = []
+
+        def addAction(act, slot):
+            if act is None or slot is None:
+                return
+            if not any(a == act and s == slot for a, s in actions):
+                actions.append((act, slot))
+
         # Current action
-        if animdata.action:
-            actions.append(animdata.action)
+        addAction(animdata.action, animdata.action_slot)
         # actions in NLA
-        if animdata.nla_tracks:
-            for track in animdata.nla_tracks.values():
-                for strip in track.strips.values():
-                    if strip.action and strip.action not in actions:
-                        actions.append(strip.action)
+        for track in animdata.nla_tracks:
+            for strip in track.strips:
+                addAction(strip.action, strip.action_slot)
 
         # Export them all
         scene = bpy.context.scene
         currentFrame = scene.frame_current
         currentAction = animdata.action
+        currentSlot = animdata.action_slot
         meshData['animations'] = []
-        for act in actions:
+        for act, slot in actions:
+            channelbag = anim_utils.action_get_channelbag_for_slot(act, slot)
+            if channelbag is None or len(channelbag.fcurves) == 0:
+                print('Action', act.name, 'has no F-Curves for slot, skipping')
+                continue
             print('Action', act.name)
+
+            # Frame range from the keyframes of this slot's F-Curves
+            frames = [kp.co[0] for fc in channelbag.fcurves
+                      for kp in fc.keyframe_points]
+            if frames:
+                frame_range = (min(frames), max(frames))
+            else:
+                frame_range = tuple(act.frame_range)
+
             animdata.action = act
+            animdata.action_slot = slot
             animation = {}
             animation['keyframes'] = collectAnimationData(armature,
-                                                          act.frame_range,
+                                                          frame_range,
                                                           scene.render.fps,
                                                           scene.frame_step)
+            # Slot names carry a 2-char ID prefix ("OB"); keep action name
             animation['name'] = act.name
-            animation['length'] = (act.frame_range[1] -
-                                   act.frame_range[0]) / scene.render.fps
+            animation['length'] = (frame_range[1] -
+                                   frame_range[0]) / scene.render.fps
             meshData['animations'].append(animation)
 
         animdata.action = currentAction
-        scene.frame = currentFrame
+        if currentAction is not None:
+            animdata.action_slot = currentSlot
+        scene.frame_set(currentFrame)
 
 
 def collectAnimationData(armature, frame_range, fps, step=1):
@@ -284,11 +301,9 @@ def collectAnimationData(armature, frame_range, fps, step=1):
     bpy.ops.object.mode_set(mode='EDIT', toggle=False)
     for b in armature.data.edit_bones:
         if b.parent:
-            mat[b.name] = matmul([fix2,
-                                  b.parent.matrix.to_3x3().transposed(),
-                                  b.matrix.to_3x3()])
+            mat[b.name] = fix2 @ b.parent.matrix.to_3x3().transposed() @ b.matrix.to_3x3()
         else:
-            mat[b.name] = matmul([fix1, b.matrix.to_3x3()])
+            mat[b.name] = fix1 @ b.matrix.to_3x3()
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
     setActiveObject(bpy.context, prev)
     setIsHidden(armature, hidden)
@@ -296,7 +311,7 @@ def collectAnimationData(armature, frame_range, fps, step=1):
     # Collect data
     for frame in range(int(start), int(end)+1, step):
         time = (frame - start) / fps
-        bpy.context.scene.frame = frame
+        bpy.context.scene.frame_set(frame)
         for bone in armature.pose.bones:
             loc = bone.location
             rot = bone.rotation_quaternion.normalized()
@@ -763,12 +778,50 @@ def luminosity(c):
     return c[0] * 0.25 + c[1] * 0.5 + c[2] * 0.25
 
 
+def _pick_color_data(mesh, exportColour):
+    """Return (colour_data, alpha_data) from mesh.color_attributes.
+
+    Alpha comes from an attribute named 'alpha'; colour from the first
+    CORNER-domain attribute that is not the alpha one.
+    """
+    colourData = alphaData = None
+    if not (exportColour and mesh.color_attributes):
+        return colourData, alphaData
+    for attr in mesh.color_attributes:
+        if attr.name.lower() == 'alpha':
+            alphaData = attr.data
+            break
+    for attr in mesh.color_attributes:
+        if attr.domain == 'CORNER' and attr.name.lower() != 'alpha':
+            return attr.data, alphaData
+    for attr in mesh.color_attributes:
+        if attr.domain == 'CORNER':
+            return attr.data, alphaData
+    return colourData, alphaData
+
+
+def _vertex_bone_weights(ob, vertex):
+    """Return {vertex_group_name: weight} for a mesh vertex (weight > 0.01)."""
+    weights = {}
+    groups = ob.vertex_groups
+    for g in vertex.groups:
+        if g.weight > 0.01 and g.group < len(groups):
+            weights[groups[g.group].name] = g.weight
+    return weights
+
+
 def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
                      exportColour, exportTangents, exportBinormals,
                      exportPoses):
     import bmesh
+    import sys
     depsgraph = context.evaluated_depsgraph_get()
+    meshData['submeshes'] = []
+    # Per-object copies: an object without UVs must not disable tangents
+    # for the objects that follow it.
+    wantTangents, wantBinormals = exportTangents, exportBinormals
     for ob in selectedObjects:
+        exportTangents, exportBinormals = wantTangents, wantBinormals
         # ob = bpy.types.Object ##
         materials = []
         for mat in ob.data.materials:
@@ -783,9 +836,11 @@ def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
             materials.append('_missing_material_')
         _sm_faces_ = []
         _sm_verts_ = []
+        _sm_maps_ = []
         for matidx, mat in enumerate(materials):
             _sm_faces_.append([])
             _sm_verts_.append([])
+            _sm_maps_.append({})
 
         tobj = ob.evaluated_get(depsgraph) \
             if applyModifiers else ob
@@ -798,43 +853,20 @@ def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
         bm.to_mesh(mesh)
         bm.free()
 
-        # Calculate normals and tangents
+        # Tangents (split normals are always available via corner_normals)
         if not mesh.uv_layers.active:
             exportTangents = exportBinormals = False
         if exportTangents:
             mesh.calc_tangents(mesh.uv_layers.active.name)
-        else:
-            mesh.calc_normals_split()
 
         # pick uv data
         uvData = mesh.uv_layers.active.data if mesh.uv_layers.active else None
 
         # Pick colour data
-        colourData = None
-        alphaData = None
-        if exportColour and mesh.color_attributes:
-            colorAttr = None
-            for attr in mesh.color_attributes:
-                if attr.name.lower() == 'alpha':
-                    alphaData = attr.data
-                    # pick a different one for colour if alpha layer is active
-                    if attr.is_active_render_color_attribute:
-                        colorAttr = None
-                        for attr2 in mesh.color_attributes:
-                            if attr2.is_active_render_color_attribute is False:
-                                colorAttr = attr2
-                                break
-                        colourData = colorAttr.data if colorAttr else None
-                    break
-            if not alphaData:
-                # use first available color attribute
-                colourData = mesh.color_attributes[0].data
-
-        map = {}
+        colourData, alphaData = _pick_color_data(mesh, exportColour)
 
         import sys
-        progressScale = 1.0 / (len(mesh.polygons) - 1)
-
+        progressScale = 1.0 / max(len(mesh.polygons) - 1, 1)
         for fidx, face in enumerate(mesh.polygons):
             faces = _sm_faces_[face.material_index]
             # Ogre only supports triangles
@@ -863,9 +895,9 @@ def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
                 loop = face.loop_indices[i]
 
                 px, py, pz = mesh.vertices[vertex].co
-                nx, ny, nz = mesh.loops[loop].normal
+                nx, ny, nz = mesh.corner_normals[loop].vector
                 u, v = uvData[loop].uv if uvData else (0, 0)
-                r, g, b = colourData[loop].color if colourData else (1, 1, 1)
+                r, g, b = colourData[loop].color[:3] if colourData else (1, 1, 1)
                 a = alphaData[loop].color[0] if alphaData else 1
 
                 tangent = mesh.loops[loop].tangent[:] + \
@@ -874,12 +906,7 @@ def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
                 binormal = mesh.loops[loop].bitangent * - \
                     1 if exportBinormals else None
 
-                # vertex groups
-                boneWeights = {}
-                for vxGroup in mesh.vertices[vertex].groups:
-                    if vxGroup.weight > 0.01:
-                        vg = ob.vertex_groups[vxGroup.group]
-                        boneWeights[vg.name] = vxGroup.weight
+                boneWeights = _vertex_bone_weights(ob, mesh.vertices[vertex])
 
                 # Add vertex
                 vert = VertexInfo(px, py, pz,
@@ -891,91 +918,91 @@ def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
                                   tangent,
                                   binormal)
 
-                newVxIdx = map.get(vert)
+                vmap = _sm_maps_[face.material_index]
+                newVxIdx = vmap.get(vert)
                 if newVxIdx is None:
                     newVxIdx = len(_sm_verts_[face.material_index])
                     _sm_verts_[face.material_index].append(vert)
-                    map[vert] = newVxIdx
+                    vmap[vert] = newVxIdx
                 newFaceVx.append(newVxIdx)
 
             faces.append(newFaceVx)
-    meshData['submeshes'] = []
-    for matidx, mat in enumerate(materials):
-        normals = []
-        tangents = []
-        binormals = []
-        positions = []
-        uvTex = []
-        colours = []
-        boneAssignments = []
-        needsParity = False
+        for matidx, mat in enumerate(materials):
+            normals = []
+            tangents = []
+            binormals = []
+            positions = []
+            uvTex = []
+            colours = []
+            boneAssignments = []
+            needsParity = False
 
-        # vertex groups of object
-        for vxInfo in _sm_verts_[matidx]:
-            positions.append([vxInfo.px, vxInfo.py, vxInfo.pz])
-            normals.append([vxInfo.nx, vxInfo.ny, vxInfo.nz])
-            uvTex.append([[vxInfo.u, vxInfo.v]])
-            colours.append([vxInfo.r, vxInfo.g, vxInfo.b, vxInfo.a])
-
-            boneWeights = []
-            for boneW in vxInfo.boneWeights.keys():
-                boneWeights.append([boneW, vxInfo.boneWeights[boneW]])
-            boneAssignments.append(boneWeights)
-
-        if exportTangents:
+            # vertex groups of object
             for vxInfo in _sm_verts_[matidx]:
-                tangents.append(vxInfo.tangent)
-                binormals.append(vxInfo.binormal)
+                positions.append([vxInfo.px, vxInfo.py, vxInfo.pz])
+                normals.append([vxInfo.nx, vxInfo.ny, vxInfo.nz])
+                uvTex.append([[vxInfo.u, vxInfo.v]])
+                colours.append([vxInfo.r, vxInfo.g, vxInfo.b, vxInfo.a])
 
-            if not exportBinormals:
+                boneWeights = []
+                for boneW in vxInfo.boneWeights.keys():
+                    boneWeights.append([boneW, vxInfo.boneWeights[boneW]])
+                boneAssignments.append(boneWeights)
+
+            if exportTangents:
                 for vxInfo in _sm_verts_[matidx]:
-                    if vxInfo.tangent[3] < 0:
-                        needsParity = True
-                        break
+                    tangents.append(vxInfo.tangent)
+                    binormals.append(vxInfo.binormal)
 
-        # Shape keys - poses
-        poses = None
-        if exportPoses and mesh.shape_keys and mesh.shape_keys.key_blocks:
-            poses = {}
-            for pose in mesh.shape_keys.key_blocks:
-                if pose.relative_key:
-                    poseData = []
-                    for index, v in enumerate(_sm_verts_[matidx]):
-                        base = pose.relative_key.data[v.original].co
-                        pos = pose.data[v.original].co
-                        x = pos[0] - base[0]
-                        y = pos[1] - base[1]
-                        z = pos[2] - base[2]
-                        if x != 0 or y != 0 or z != 0:
-                            poseData.append((index, x, y, z))
-                    if poseData:
-                        poses[pose.name] = poseData
+                if not exportBinormals:
+                    for vxInfo in _sm_verts_[matidx]:
+                        if vxInfo.tangent[3] < 0:
+                            needsParity = True
+                            break
 
-        subMeshData = {}
-        subMeshData['geometry'] = {}
-        subMeshData['geometry']['positions'] = positions
-        subMeshData['geometry']['normals'] = normals
-        subMeshData['geometry']['texcoordsets'] = len(getUVTextures(mesh))
+            # Shape keys - poses
+            poses = None
+            if exportPoses and mesh.shape_keys and mesh.shape_keys.key_blocks:
+                poses = {}
+                for pose in mesh.shape_keys.key_blocks:
+                    if pose.relative_key:
+                        poseData = []
+                        for index, v in enumerate(_sm_verts_[matidx]):
+                            base = pose.relative_key.data[v.original].co
+                            pos = pose.data[v.original].co
+                            x = pos[0] - base[0]
+                            y = pos[1] - base[1]
+                            z = pos[2] - base[2]
+                            if x != 0 or y != 0 or z != 0:
+                                poseData.append((index, x, y, z))
+                        if poseData:
+                            poses[pose.name] = poseData
 
-        if uvData:
-            subMeshData['geometry']['uvsets'] = uvTex
-        if colourData or alphaData:
-            subMeshData['geometry']['colours'] = colours
-        if exportTangents:
-            subMeshData['geometry']['tangents'] = tangents
-            subMeshData['geometry']['parity'] = needsParity
-        if exportBinormals:
-            subMeshData['geometry']['binormals'] = binormals
+            subMeshData = {}
+            subMeshData['geometry'] = {}
+            subMeshData['geometry']['positions'] = positions
+            subMeshData['geometry']['normals'] = normals
+            subMeshData['geometry']['texcoordsets'] = len(getUVTextures(mesh))
 
-        # need bone name to bone ID dict
-        subMeshData['geometry']['boneassignments'] = boneAssignments
+            if uvData:
+                subMeshData['geometry']['uvsets'] = uvTex
+            if colourData or alphaData:
+                subMeshData['geometry']['colours'] = colours
+            if exportTangents:
+                subMeshData['geometry']['tangents'] = tangents
+                subMeshData['geometry']['parity'] = needsParity
+            if exportBinormals:
+                subMeshData['geometry']['binormals'] = binormals
 
-        subMeshData['material'] = mat.name
-        subMeshData['faces'] = _sm_faces_[matidx]
-        subMeshData['geometry']['poses'] = poses
-        if poses:
-            subMeshData['geometry']['has_poses'] = True
-        meshData['submeshes'].append(subMeshData)
+            # need bone name to bone ID dict
+            subMeshData['geometry']['boneassignments'] = boneAssignments
+
+            subMeshData['material'] = mat.name
+            subMeshData['faces'] = _sm_faces_[matidx]
+            subMeshData['geometry']['poses'] = poses
+            if poses:
+                subMeshData['geometry']['has_poses'] = True
+            meshData['submeshes'].append(subMeshData)
 
     return meshData
 
@@ -986,7 +1013,11 @@ def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
     import bmesh
     depsgraph = context.evaluated_depsgraph_get()
     subMeshesData = []
+    # Per-object copies: an object without UVs must not disable tangents
+    # for the objects that follow it.
+    wantTangents, wantBinormals = exportTangents, exportBinormals
     for ob in selectedObjects:
+        exportTangents, exportBinormals = wantTangents, wantBinormals
         subMeshData = {}
         # ob = bpy.types.Object ##
         materialName = ob.name
@@ -1004,37 +1035,17 @@ def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
         bm.to_mesh(mesh)
         bm.free()
 
-        # Calculate normals and tangents
+        # Tangents (split normals are always available via corner_normals)
         if not mesh.uv_layers.active:
             exportTangents = exportBinormals = False
         if exportTangents:
             mesh.calc_tangents(mesh.uv_layers.active.name)
-        else:
-            mesh.calc_normals_split()
 
         # pick uv data
         uvData = mesh.uv_layers.active.data if mesh.uv_layers.active else None
 
         # Pick colour data
-        colourData = None
-        alphaData = None
-        if exportColour and mesh.color_attributes:
-            colorAttr = None
-            for attr in mesh.color_attributes:
-                if attr.name.lower() == 'alpha':
-                    alphaData = attr.data
-                    # pick a different one for colour if alpha layer is active
-                    if attr.is_active_render_color_attribute:
-                        colorAttr = None
-                        for attr2 in mesh.color_attributes:
-                            if attr2.is_active_render_color_attribute is False:
-                                colorAttr = attr2
-                                break
-                        colourData = colorAttr.data if colorAttr else None
-                    break
-            if not alphaData:
-                # use first available color attribute
-                colourData = mesh.color_attributes[0].data
+        colourData, alphaData = _pick_color_data(mesh, exportColour)
 
         vertexList = []
         newFaces = []
@@ -1042,7 +1053,7 @@ def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
         map = {}
 
         import sys
-        progressScale = 1.0 / (len(mesh.polygons) - 1)
+        progressScale = 1.0 / max(len(mesh.polygons) - 1, 1)
 
         for fidx, face in enumerate(mesh.polygons):
             tris = []
@@ -1073,9 +1084,9 @@ def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
                 loop = face.loop_indices[i]
 
                 px, py, pz = mesh.vertices[vertex].co
-                nx, ny, nz = mesh.loops[loop].normal
+                nx, ny, nz = mesh.corner_normals[loop].vector
                 u, v = uvData[loop].uv if uvData else (0, 0)
-                r, g, b = colourData[loop].color if colourData else (1, 1, 1)
+                r, g, b = colourData[loop].color[:3] if colourData else (1, 1, 1)
                 a = alphaData[loop].color[0] if alphaData else 1
 
                 tangent = mesh.loops[loop].tangent[:] + \
@@ -1084,12 +1095,7 @@ def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
                 binormal = mesh.loops[loop].bitangent * - \
                     1 if exportBinormals else None
 
-                # vertex groups
-                boneWeights = {}
-                for vxGroup in mesh.vertices[vertex].groups:
-                    if vxGroup.weight > 0.01:
-                        vg = ob.vertex_groups[vxGroup.group]
-                        boneWeights[vg.name] = vxGroup.weight
+                boneWeights = _vertex_bone_weights(ob, mesh.vertices[vertex])
 
                 # Add vertex
                 vert = VertexInfo(px, py, pz,
@@ -1229,7 +1235,11 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                 # mat = bpy.types.Material ##
                 if mat and mat.name not in allMaterials:
                     matInfo = {}
-                    bsdf = mat.node_tree.nodes.get('ShaderNodeBsdfPrincipled')
+                    bsdf = None
+                    if mat.node_tree:
+                        bsdf = next((n for n in mat.node_tree.nodes
+                                     if n.bl_idname == 'ShaderNodeBsdfPrincipled'),
+                                    None)
                     if bsdf is None:
                         print(f"Warning: No Principled BSDF in material '{mat.name}', skipping.")
                         continue
@@ -1245,11 +1255,23 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                                           .default_value[1],
                                           bsdf.inputs['Base Color']
                                           .default_value[2]]
-                    # specular
+                    # specular - Ogre specular is a color; Blender 5.x has a
+                    # scalar 'Specular IOR Level' (default 0.5) and a
+                    # 'Specular Tint' color. Export tint * level, but keep
+                    # the TL2 default (black) when the level is unlinked
+                    # at its default / zero.
                     # TL2 Default values
                     matInfo['specular'] = [0, 0, 0]
+                    specLevel = bsdf.inputs['Specular IOR Level']
+                    specTint = bsdf.inputs['Specular Tint']
+                    if not specLevel.is_linked and \
+                            abs(specLevel.default_value - 0.5) > 1e-6:
+                        matInfo['specular'] = [
+                            specTint.default_value[i] * specLevel.default_value
+                            for i in range(3)]
 
-                    # emissive
+                    # emissive: Principled BSDF 'Emission Color' x strength
+                    # (used when the import-time EmissionR/G/B nodes are absent)
                     emissionR = mat.node_tree.nodes.get('EmissionR', None)
                     emissionG = mat.node_tree.nodes.get('EmissionG', None)
                     emissionB = mat.node_tree.nodes.get('EmissionB', None)
@@ -1263,8 +1285,17 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                             emissionB.inputs['Strength'].default_value
                         ]
                     else:
-                        # TL2 Default values
-                        matInfo['emissive'] = [0.4, 0.4, 0.4]
+                        emisColor = bsdf.inputs['Emission Color']
+                        emisStrength = bsdf.inputs['Emission Strength']
+                        if not emisColor.is_linked and \
+                                emisStrength.default_value > 0.0:
+                            matInfo['emissive'] = [
+                                emisColor.default_value[i] *
+                                emisStrength.default_value
+                                for i in range(3)]
+                        else:
+                            # TL2 Default values
+                            matInfo['emissive'] = [0.4, 0.4, 0.4]
 
                     # texture
                     textures = [x for x in mat.node_tree.nodes
@@ -1321,7 +1352,7 @@ def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
 
 
 def select_get(obj):
-    return obj.is_selected_in_viewport
+    return obj.select_get()
 
 
 def save(operator, context, filepath,
@@ -1398,6 +1429,15 @@ def save(operator, context, filepath,
     # materials
     if export_materials:
         bCollectMaterialData(blenderMeshData, selectedObjects)
+
+    if tangent_parity:
+        # Honor the "Parity in W" checkbox: store parity in the tangent W component.
+        # Only applies when tangents are exported without binormals, since parity
+        # replaces the binormal. Otherwise keep the value computed during collection.
+        for submesh in blenderMeshData.get('submeshes', []):
+            geometry = submesh.get('geometry')
+            if geometry is not None and 'tangents' in geometry and 'binormals' not in geometry:
+                geometry['parity'] = True
 
     if export_animation:
         bCollectAnimationData(blenderMeshData)
