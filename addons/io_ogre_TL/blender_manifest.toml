@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "io_ogre_tl"
-version = "1.1.0"
+version = "1.0.0"
 name = "Torchlight 2 MESH format"
 tagline = "Import and export Torchlight 2 OGRE mesh files"
 type = "add-on"
