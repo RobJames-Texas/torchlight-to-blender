@@ -925,7 +925,9 @@ def bCreateSubMeshes(meshData, meshName):
                 texturePath = matInfo['texture']
                 if texturePath and os.path.isfile(texturePath):
                     try:
-                        node_texture.image = bpy.data.images.load(texturePath)
+                        # Reuse the image when another material uses the same file
+                        node_texture.image = bpy.data.images.load(
+                            texturePath, check_existing=True)
                         if node_texture.image:
                             node_texture.image.colorspace_settings.name = 'sRGB'
                     except Exception as e:

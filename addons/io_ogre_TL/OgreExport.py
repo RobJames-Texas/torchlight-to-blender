@@ -4,6 +4,7 @@ from bpy_extras import anim_utils
 from mathutils import Vector, Matrix
 import math
 import os
+import re
 import subprocess
 import shutil
 
@@ -1340,7 +1341,8 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                         for texImage in textures:
                             if texImage and texImage.image:
                                 texInfo = {}
-                                texInfo['texture'] = texImage.image.name
+                                texInfo['texture'] = \
+                                    getTextureFileName(texImage.image)
                                 texInfo['texture_path'] = \
                                     texImage.image.filepath
                                 matInfo['textures'].append(texInfo)
@@ -1388,6 +1390,19 @@ def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
 
 def select_get(obj):
     return obj.select_get()
+
+
+def getTextureFileName(image):
+    """Return the texture file name to write in the .material file.
+
+    Use the file name of the image, not the name of the Blender image.
+    Blender adds ".001" to the name when two images use the same file."""
+    if image.filepath:
+        name = os.path.basename(bpy.path.abspath(image.filepath))
+        if name:
+            return name
+    # No file (for example a packed image): remove a ".001" style suffix
+    return re.sub(r'(\.[A-Za-z0-9]+)\.\d{3,}$', r'\1', image.name)
 
 
 def save(operator, context, filepath,
