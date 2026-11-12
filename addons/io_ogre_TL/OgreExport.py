@@ -249,7 +249,13 @@ def bCollectAnimationData(meshData):
         for act, slot in actions:
             channelbag = anim_utils.action_get_channelbag_for_slot(act, slot)
             if channelbag is None or len(channelbag.fcurves) == 0:
-                print('Action', act.name, 'has no F-Curves for slot, skipping')
+                # Keep empty actions as empty animations. Torchlight 2 needs
+                # the empty "Bind" animation, and import creates it as an
+                # empty action.
+                print('Action', act.name, 'has no F-Curves, exporting empty')
+                meshData['animations'].append({'name': act.name,
+                                               'length': 0.0,
+                                               'keyframes': {}})
                 continue
             print('Action', act.name)
 
@@ -343,8 +349,37 @@ def collectAnimationData(armature, frame_range, fps, step=1):
         # Delete whole track if unused
         if not (data[0] or data[1] or data[2]):
             keyframes[bone] = None
+        else:
+            _pruneConstantKeyframes(data)
 
     return keyframes
+
+
+def _pruneConstantKeyframes(data, tolerance=1e-5):
+    """Remove keyframes that equal both neighbours (lossless for linear
+    interpolation). The first and last keyframes always stay, so a track
+    never loses all its keys. All used channels (pos, rot, scl) drop the
+    same frames, because xSaveAnimation reads them with one shared index."""
+    used = [channel for channel in data if channel]
+    count = len(used[0])
+    if count < 3:
+        return
+
+    def same(channel, a, b):
+        return all(abs(x - y) <= tolerance
+                   for x, y in zip(channel[a][1], channel[b][1]))
+
+    keep = [0]
+    for i in range(1, count - 1):
+        if not all(same(ch, i, i - 1) and same(ch, i, i + 1) for ch in used):
+            keep.append(i)
+    keep.append(count - 1)
+
+    if len(keep) == count:
+        return
+    for n in range(3):
+        if data[n]:
+            data[n] = [data[n][i] for i in keep]
 
 
 def xSaveAnimations(meshData, xNode, xDoc):
