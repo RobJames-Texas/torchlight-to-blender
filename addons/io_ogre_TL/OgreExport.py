@@ -116,7 +116,7 @@ class Skeleton(object):
         # get ogre bone ids - need to be in edit mode to access edit_bones
         # prev = bpy.context.scene.objects.active
         prev = bpy.context.object
-        setActiveObject(bpy.context, self.armature)
+        set_active_object(bpy.context, self.armature)
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         bpy.ops.object.mode_set(mode='EDIT', toggle=False)
         for bone in data.edit_bones:
@@ -124,7 +124,7 @@ class Skeleton(object):
                 self.ids[bone.name] = bone['OGREID']
 
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
-        setActiveObject(bpy.context, prev)
+        set_active_object(bpy.context, prev)
         setIsHidden(self.armature, self.hidden)
 
         # Allocate bone ids
@@ -219,7 +219,7 @@ class Skeleton(object):
 #########################################
 
 
-def bCollectAnimationData(meshData):
+def blender_collect_animation_data(meshData):
     if 'skeleton' not in meshData:
         return
     armature = meshData['skeleton'].armature
@@ -271,10 +271,11 @@ def bCollectAnimationData(meshData):
             animdata.action = act
             animdata.action_slot = slot
             animation = {}
-            animation['keyframes'] = collectAnimationData(armature,
-                                                          frame_range,
-                                                          scene.render.fps,
-                                                          scene.frame_step)
+            animation['keyframes'] = blender_sample_pose_keyframes(
+                armature,
+                frame_range,
+                scene.render.fps,
+                scene.frame_step)
             # Slot names carry a 2-char ID prefix ("OB"); keep action name
             animation['name'] = act.name
             animation['length'] = (frame_range[1] -
@@ -287,7 +288,7 @@ def bCollectAnimationData(meshData):
         scene.frame_set(currentFrame)
 
 
-def collectAnimationData(armature, frame_range, fps, step=1):
+def blender_sample_pose_keyframes(armature, frame_range, fps, step=1):
     start, end = frame_range
 
     keyframes = {}
@@ -303,7 +304,7 @@ def collectAnimationData(armature, frame_range, fps, step=1):
     setIsHidden(armature, False)
     # prev = bpy.context.scene.objects.active
     prev = bpy.context.object
-    setActiveObject(bpy.context, armature)
+    set_active_object(bpy.context, armature)
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
     bpy.ops.object.mode_set(mode='EDIT', toggle=False)
     for b in armature.data.edit_bones:
@@ -312,7 +313,7 @@ def collectAnimationData(armature, frame_range, fps, step=1):
         else:
             mat[b.name] = fix1 @ b.matrix.to_3x3()
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
-    setActiveObject(bpy.context, prev)
+    set_active_object(bpy.context, prev)
     setIsHidden(armature, hidden)
 
     # Collect data
@@ -351,16 +352,16 @@ def collectAnimationData(armature, frame_range, fps, step=1):
         if not (data[0] or data[1] or data[2]):
             keyframes[bone] = None
         else:
-            _pruneConstantKeyframes(data)
+            _prune_constant_keyframes(data)
 
     return keyframes
 
 
-def _pruneConstantKeyframes(data, tolerance=1e-5):
+def _prune_constant_keyframes(data, tolerance=1e-5):
     """Remove keyframes that equal both neighbours (lossless for linear
     interpolation). The first and last keyframes always stay, so a track
     never loses all its keys. All used channels (pos, rot, scl) drop the
-    same frames, because xSaveAnimation reads them with one shared index."""
+    same frames, because xml_save_animation reads them with one shared index."""
     used = [channel for channel in data if channel]
     count = len(used[0])
     if count < 3:
@@ -383,16 +384,16 @@ def _pruneConstantKeyframes(data, tolerance=1e-5):
             data[n] = [data[n][i] for i in keep]
 
 
-def xSaveAnimations(meshData, xNode, xDoc):
+def xml_save_animations(meshData, xNode, xDoc):
     if 'animations' in meshData:
         animations = xDoc.createElement("animations")
         xNode.appendChild(animations)
 
         for animation in meshData['animations']:
-            xSaveAnimation(animation, xDoc, animations)
+            xml_save_animation(animation, xDoc, animations)
 
 
-def xSaveAnimation(animation, xDoc, xAnimations):
+def xml_save_animation(animation, xDoc, xAnimations):
     anim = xDoc.createElement('animation')
     tracks = xDoc.createElement('tracks')
     xAnimations.appendChild(anim)
@@ -450,7 +451,7 @@ def xSaveAnimation(animation, xDoc, xAnimations):
                 keyframe.appendChild(scale)
 
 
-def setActiveObject(context, obj):
+def set_active_object(context, obj):
     context.view_layer.objects.active = obj
 
 
@@ -652,7 +653,7 @@ def xSavePoses(meshData, xDoc, xMesh):
                 xPose.appendChild(xPoseVertex)
 
 
-def xSaveSkeletonData(blenderMeshData, filepath):
+def xml_save_skeleton_data(blenderMeshData, filepath):
     from xml.dom.minidom import Document
     if 'skeleton' in blenderMeshData:
         skeleton = blenderMeshData['skeleton']
@@ -663,7 +664,7 @@ def xSaveSkeletonData(blenderMeshData, filepath):
         skeleton.export_xml(xDoc, xRoot)
 
         if 'animations' in blenderMeshData:
-            xSaveAnimations(blenderMeshData, xRoot, xDoc)
+            xml_save_animations(blenderMeshData, xRoot, xDoc)
 
         # xmlfile = os.path.join(filepath, '%s.skeleton.xml' %name )
         nameOnly = os.path.splitext(filepath)[0]  # removing .mesh
@@ -1249,7 +1250,7 @@ def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
     return meshData
 
 
-def bCollectSkeletonData(blenderMeshData, selectedObjects, sort):
+def blender_collect_skeleton_data(blenderMeshData, selectedObjects, sort):
     if SHOW_EXPORT_TRACE:
         print("bpy.data.armatures = %s" % bpy.data.armatures)
 
@@ -1456,7 +1457,7 @@ def save(operator, context, filepath,
     blenderMeshData = {}
 
     # skeleton
-    bCollectSkeletonData(blenderMeshData, selectedObjects, export_bonesort)
+    blender_collect_skeleton_data(blenderMeshData, selectedObjects, export_bonesort)
 
     # mesh
     # TODO: Turn this into a factory pattern. Need to follow DRY.
@@ -1490,7 +1491,7 @@ def save(operator, context, filepath,
                 geometry['parity'] = True
 
     if export_animation:
-        bCollectAnimationData(blenderMeshData)
+        blender_collect_animation_data(blenderMeshData)
 
     if SHOW_EXPORT_TRACE:
         print(blenderMeshData['materials'])
@@ -1502,7 +1503,7 @@ def save(operator, context, filepath,
         fileWr.close()
 
     if export_skeleton:
-        xSaveSkeletonData(blenderMeshData, filepath)
+        xml_save_skeleton_data(blenderMeshData, filepath)
 
     xSaveMeshData(blenderMeshData, filepath, export_skeleton)
 
