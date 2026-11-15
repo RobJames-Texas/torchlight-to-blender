@@ -304,6 +304,13 @@ def blender_sample_pose_keyframes(armature, frame_range, fps, step=1):
     set_active_object(bpy.context, prev)
     set_is_hidden(armature, hidden)
 
+    # Reset the pose, so bones without F-Curves in this action export the
+    # rest pose and not a leftover pose
+    for bone in armature.pose.bones:
+        bone.location = (0.0, 0.0, 0.0)
+        bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        bone.scale = (1.0, 1.0, 1.0)
+
     # Collect data
     for frame in range(int(start), int(end)+1, step):
         time = (frame - start) / fps
