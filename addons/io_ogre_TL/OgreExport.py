@@ -1,7 +1,6 @@
-from xml.dom import minidom
 import bpy
 from bpy_extras import anim_utils
-from mathutils import Vector, Matrix
+from mathutils import Matrix
 import math
 import os
 import re
@@ -23,14 +22,6 @@ def get_is_hidden(obj):
 
 def set_is_hidden(obj, isHidden):
     obj.hide_viewport = isHidden
-
-
-def to_mesh(obj, applyModifiers):
-    if applyModifiers:
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        return obj.evaluated_get(depsgraph).to_mesh()
-    else:
-        return obj.to_mesh()
 
 
 def get_uv_textures(mesh):
@@ -169,10 +160,6 @@ class Skeleton(object):
 
     def bone_id(self, name):
         return self.ids[name]
-
-    def verify(self):
-        for i, bone in enumerate(self.bones):
-            print(i, bone)
 
     def export_xml(self, doc, root):
         bones = doc.createElement('bones')
@@ -798,21 +785,6 @@ def xml_save_material_data(filepath, meshData, overwriteMaterialFlag, copyTextur
                             print(
                                 "Can't copy texture \"%s\" because file does "
                                 "not exists!" % srcTextureFile)
-
-
-def get_vertex_index(vertexInfo, vertexList):
-    for vIdx, vert in enumerate(vertexList):
-        if vertexInfo == vert:
-            return vIdx
-
-    # not present in list:
-    vertexList.append(vertexInfo)
-    return len(vertexList)-1
-
-
-# Convert rgb colour to brightness value - used for alpha channel
-def luminosity(c):
-    return c[0] * 0.25 + c[1] * 0.5 + c[2] * 0.25
 
 
 def _pick_color_data(mesh, exportColour):
