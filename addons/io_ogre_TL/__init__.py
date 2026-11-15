@@ -182,7 +182,7 @@ OgreTlAddonPreferences = _pref.OgreTlAddonPreferences
 # ---------------------------------------------------------------------------
 # Import Operator
 # ---------------------------------------------------------------------------
-class ImportOgre(bpy.types.Operator, ImportHelper):
+class IMPORT_SCENE_OT_mesh(bpy.types.Operator, ImportHelper):
     '''Load an Ogre MESH File'''
     bl_idname = "import_scene.mesh"
     bl_label = "Import OGRE Mesh"
@@ -277,7 +277,7 @@ class ImportOgre(bpy.types.Operator, ImportHelper):
 # ---------------------------------------------------------------------------
 # Export Operator
 # ---------------------------------------------------------------------------
-class ExportOgre(bpy.types.Operator, ExportHelper):
+class EXPORT_SCENE_OT_mesh(bpy.types.Operator, ExportHelper):
     '''Export a Torchlight MESH File'''
 
     bl_idname = "export_scene.mesh"
@@ -445,17 +445,17 @@ class ExportOgre(bpy.types.Operator, ExportHelper):
 # Menu Registration
 # ---------------------------------------------------------------------------
 def menu_func_import(self, context):
-    self.layout.operator(ImportOgre.bl_idname, text="Torchlight OGRE (.mesh)")
+    self.layout.operator(IMPORT_SCENE_OT_mesh.bl_idname, text="Torchlight OGRE (.mesh)")
 
 
 def menu_func_export(self, context):
-    self.layout.operator(ExportOgre.bl_idname, text="Torchlight OGRE (.mesh)")
+    self.layout.operator(EXPORT_SCENE_OT_mesh.bl_idname, text="Torchlight OGRE (.mesh)")
 
 
 classes = (
     OgreTlAddonPreferences,
-    ImportOgre,
-    ExportOgre
+    IMPORT_SCENE_OT_mesh,
+    EXPORT_SCENE_OT_mesh
 )
 
 # ---------------------------------------------------------------------------
