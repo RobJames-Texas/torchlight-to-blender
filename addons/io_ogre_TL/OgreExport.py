@@ -17,15 +17,15 @@ def hash_combine(x, y):
     return x ^ y + 0x9e3779b9 + (x << 6) + (x >> 2)
 
 
-def getIsHidden(obj):
+def get_is_hidden(obj):
     return obj.hide_viewport  # 2.8
 
 
-def setIsHidden(obj, isHidden):
+def set_is_hidden(obj, isHidden):
     obj.hide_viewport = isHidden
 
 
-def toMesh(obj, applyModifiers):
+def to_mesh(obj, applyModifiers):
     if applyModifiers:
         depsgraph = bpy.context.evaluated_depsgraph_get()
         return obj.evaluated_get(depsgraph).to_mesh()
@@ -33,7 +33,7 @@ def toMesh(obj, applyModifiers):
         return obj.to_mesh()
 
 
-def getUVTextures(mesh):
+def get_uv_textures(mesh):
     return mesh.uv_layers
 
 
@@ -109,9 +109,9 @@ class Skeleton(object):
         self.armature = ob.find_armature()
         self.name = self.armature.name
         self.ids = {}
-        self.hidden = getIsHidden(self.armature)
+        self.hidden = get_is_hidden(self.armature)
         data = self.armature.data
-        setIsHidden(self.armature, False)
+        set_is_hidden(self.armature, False)
 
         # get ogre bone ids - need to be in edit mode to access edit_bones
         # prev = bpy.context.scene.objects.active
@@ -125,7 +125,7 @@ class Skeleton(object):
 
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         set_active_object(bpy.context, prev)
-        setIsHidden(self.armature, self.hidden)
+        set_is_hidden(self.armature, self.hidden)
 
         # Allocate bone ids
         index = 0
@@ -300,8 +300,8 @@ def blender_sample_pose_keyframes(armature, frame_range, fps, step=1):
 
     # Get base matrices
     mat = {}
-    hidden = getIsHidden(armature)
-    setIsHidden(armature, False)
+    hidden = get_is_hidden(armature)
+    set_is_hidden(armature, False)
     # prev = bpy.context.scene.objects.active
     prev = bpy.context.object
     set_active_object(bpy.context, armature)
@@ -314,7 +314,7 @@ def blender_sample_pose_keyframes(armature, frame_range, fps, step=1):
             mat[b.name] = fix1 @ b.matrix.to_3x3()
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
     set_active_object(bpy.context, prev)
-    setIsHidden(armature, hidden)
+    set_is_hidden(armature, hidden)
 
     # Collect data
     for frame in range(int(start), int(end)+1, step):
@@ -479,7 +479,7 @@ def indent(indent):
     return "        "*indent
 
 
-def xSaveGeometry(geometry, xDoc, xMesh):
+def xml_save_geometry(geometry, xDoc, xMesh):
     # I guess positions (vertices) must be there always
     vertices = geometry['positions']
 
@@ -583,7 +583,7 @@ def xSaveGeometry(geometry, xDoc, xMesh):
             xVertex.appendChild(xBinormal)
 
 
-def xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry=False):
+def xml_save_submeshes(meshData, xDoc, xMesh, hasSharedGeometry=False):
     xSubMeshes = xDoc.createElement("submeshes")
     xMesh.appendChild(xSubMeshes)
 
@@ -610,7 +610,7 @@ def xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry=False):
         # if there is geometry per sub mesh
         if 'geometry' in submesh:
             geometry = submesh['geometry']
-            xSaveGeometry(geometry, xDoc, xSubMesh)
+            xml_save_geometry(geometry, xDoc, xSubMesh)
         # boneassignments
         if 'skeleton' in meshData:
             skeleton = meshData['skeleton']
@@ -631,7 +631,7 @@ def xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry=False):
             xSubMesh.appendChild(xBoneAssignments)
 
 
-def xSavePoses(meshData, xDoc, xMesh):
+def xml_save_poses(meshData, xDoc, xMesh):
     xPoses = xDoc.createElement("poses")
     xMesh.appendChild(xPoses)
     for index, submesh in enumerate(meshData['submeshes']):
@@ -675,7 +675,7 @@ def xml_save_skeleton_data(blenderMeshData, filepath):
         f.close()
 
 
-def xSaveMeshData(meshData, filepath, export_skeleton):
+def xml_save_mesh_data(meshData, filepath, export_skeleton):
     from xml.dom.minidom import Document
 
     hasSharedGeometry = False
@@ -692,12 +692,12 @@ def xSaveMeshData(meshData, filepath, export_skeleton):
 
     if hasSharedGeometry:
         geometry = meshData['sharedgeometry']
-        xSaveGeometry(geometry, xDoc, xMesh)
+        xml_save_geometry(geometry, xDoc, xMesh)
 
-    xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry)
+    xml_save_submeshes(meshData, xDoc, xMesh, hasSharedGeometry)
 
     if 'has_poses' in meshData:
-        xSavePoses(meshData, xDoc, xMesh)
+        xml_save_poses(meshData, xDoc, xMesh)
 
     # skeleton link only
     if 'skeleton' in meshData:
@@ -800,7 +800,7 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
                                 "not exists!" % srcTextureFile)
 
 
-def getVertexIndex(vertexInfo, vertexList):
+def get_vertex_index(vertexInfo, vertexList):
     for vIdx, vert in enumerate(vertexList):
         if vertexInfo == vert:
             return vIdx
@@ -847,9 +847,9 @@ def _vertex_bone_weights(ob, vertex):
     return weights
 
 
-def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
-                     exportColour, exportTangents, exportBinormals,
-                     exportPoses):
+def blender_collect_mesh_data(meshData, context, selectedObjects,
+                              applyModifiers, exportColour, exportTangents,
+                              exportBinormals, exportPoses):
     import bmesh
     import sys
     depsgraph = context.evaluated_depsgraph_get()
@@ -1019,7 +1019,7 @@ def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
             subMeshData['geometry'] = {}
             subMeshData['geometry']['positions'] = positions
             subMeshData['geometry']['normals'] = normals
-            subMeshData['geometry']['texcoordsets'] = len(getUVTextures(mesh))
+            subMeshData['geometry']['texcoordsets'] = len(get_uv_textures(mesh))
 
             if uvData:
                 subMeshData['geometry']['uvsets'] = uvTex
@@ -1044,9 +1044,10 @@ def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
     return meshData
 
 
-def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
-                             exportColour, exportTangents, exportBinormals,
-                             exportPoses):
+def blender_collect_mesh_data_original(meshData, context, selectedObjects,
+                                       applyModifiers, exportColour,
+                                       exportTangents, exportBinormals,
+                                       exportPoses):
     import bmesh
     depsgraph = context.evaluated_depsgraph_get()
     subMeshesData = []
@@ -1215,9 +1216,9 @@ def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
 
         geometry['positions'] = positions
         geometry['normals'] = normals
-        geometry['texcoordsets'] = len(getUVTextures(mesh))
+        geometry['texcoordsets'] = len(get_uv_textures(mesh))
         if SHOW_EXPORT_TRACE:
-            print("texcoordsets: " + str(len(getUVTextures(mesh))))
+            print("texcoordsets: " + str(len(get_uv_textures(mesh))))
         if uvData:
             geometry['uvsets'] = uvTex
         if colourData or alphaData:
@@ -1462,21 +1463,21 @@ def save(operator, context, filepath,
     # mesh
     # TODO: Turn this into a factory pattern. Need to follow DRY.
     if enable_by_material:
-        bCollectMeshData(blenderMeshData, context,
-                         selectedObjects,
-                         apply_modifiers,
-                         export_colour,
-                         export_tangents,
-                         export_binormals,
-                         export_poses)
+        blender_collect_mesh_data(blenderMeshData, context,
+                                  selectedObjects,
+                                  apply_modifiers,
+                                  export_colour,
+                                  export_tangents,
+                                  export_binormals,
+                                  export_poses)
     else:
-        bCollectMeshDataOriginal(blenderMeshData, context,
-                                 selectedObjects,
-                                 apply_modifiers,
-                                 export_colour,
-                                 export_tangents,
-                                 export_binormals,
-                                 export_poses)
+        blender_collect_mesh_data_original(blenderMeshData, context,
+                                           selectedObjects,
+                                           apply_modifiers,
+                                           export_colour,
+                                           export_tangents,
+                                           export_binormals,
+                                           export_poses)
     # materials
     if export_materials:
         bCollectMaterialData(blenderMeshData, selectedObjects)
@@ -1505,7 +1506,7 @@ def save(operator, context, filepath,
     if export_skeleton:
         xml_save_skeleton_data(blenderMeshData, filepath)
 
-    xSaveMeshData(blenderMeshData, filepath, export_skeleton)
+    xml_save_mesh_data(blenderMeshData, filepath, export_skeleton)
 
     xSaveMaterialData(filepath,
                       blenderMeshData,
