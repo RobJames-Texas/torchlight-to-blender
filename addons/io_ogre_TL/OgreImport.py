@@ -8,7 +8,6 @@ from bpy_extras.anim_utils import action_ensure_channelbag_for_slot
 
 SHOW_IMPORT_DUMPS = False
 SHOW_IMPORT_TRACE = False
-DEFAULT_KEEP_XML = False
 MIN_BONE_LENGTH = 0.00001  # Prevent automatic removal of bones
 
 
@@ -125,11 +124,8 @@ def xml_collect_vertex_data(data, useNormals):
 
 def xml_collect_mesh_data(meshData, xmldoc, meshname, dirname, useNormals):
     # global has_skeleton
-    faceslist = []
     subMeshData = []
-    allObjs = []
     isSharedGeometry = False
-    sharedGeom = []
     hasSkeleton = 'boneIDs' in meshData
 
     # collect shared geometry
@@ -165,8 +161,6 @@ def xml_collect_mesh_data(meshData, xmldoc, meshname, dirname, useNormals):
                             break
 
                     if (subnodes.localName == 'geometry'):
-                        vertexcount = int(
-                            subnodes.getAttributeNode('vertexcount').value)
                         sm['geometry'] = xml_collect_vertex_data(
                             subnodes, useNormals)
 
@@ -820,31 +814,6 @@ def blender_create_skeleton(meshData, name):
     bpy.context.view_layer.update()
 
 
-def blender_merge_vertices(subMesh):
-    # This sort of works, but leaves all uv seams as sharp.
-    geometry = subMesh['geometry']
-    vertices = geometry['positions']
-    normals = geometry['normals']
-    uvsets = geometry['uvsets'] if 'uvsets' in geometry else None
-    lookup = {}
-    map = [i for i in range(len(vertices))]
-    for i in range(len(vertices)):
-        vert = vertices[i]
-        norm = normals[i]
-        uv = tuple(uvsets[i][0]) if uvsets else None
-        item = (tuple(vert), tuple(norm), uv)
-        target = lookup.get(item)
-        if target is None:
-            lookup[item] = i
-        else:
-            map[i] = target
-    # update faces
-    faces = subMesh['faces']
-    for face in faces:
-        for i in range(len(face)):
-            face[i] = map[face[i]]
-
-
 def blender_create_submeshes(meshData, meshName):
     allObjects = []
     submeshes = meshData['submeshes']
@@ -1022,7 +991,7 @@ def blender_create_submeshes(meshData, meshName):
                     if base is None:
                         base = ob.shape_key_add(name='Basis')
                     name = pose['name']
-                    shape = ob.shape_key_add(name=name)
+                    ob.shape_key_add(name=name)
                     for vkey in pose['data']:
                         # Pose indices refer to the original Ogre vertex array;
                         # remap to the compacted per-submesh vertex list.
@@ -1086,10 +1055,6 @@ def set_active_object(context, obj):
 
 def add_object_to_scene(context, obj):
     context.scene.collection.objects.link(obj)
-
-
-def remove_object_from_scene(context, obj):
-    context.scene.collection.objects.unlink(obj)
 
 
 def get_bone_name_map_from_armature(arm):
