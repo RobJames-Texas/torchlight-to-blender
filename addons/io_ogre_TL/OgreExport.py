@@ -205,7 +205,7 @@ class Skeleton(object):
 #########################################
 
 
-def blender_collect_animation_data(meshData):
+def blender_collect_animation_data(meshData, action_names=None):
     if 'skeleton' not in meshData:
         return
     armature = meshData['skeleton'].armature
@@ -226,6 +226,9 @@ def blender_collect_animation_data(meshData):
         for track in animdata.nla_tracks:
             for strip in track.strips:
                 addAction(strip.action, strip.action_slot)
+
+        if action_names is not None:
+            actions = [(a, s) for a, s in actions if a.name in action_names]
 
         # Export them all
         scene = bpy.context.scene
@@ -369,13 +372,12 @@ def _prune_constant_keyframes(data, tolerance=1e-5):
             data[n] = [data[n][i] for i in keep]
 
 
-def xml_save_animations(meshData, xNode, xDoc):
-    if 'animations' in meshData:
-        animations = xDoc.createElement("animations")
-        xNode.appendChild(animations)
+def xml_save_animations(animations, xNode, xDoc):
+    xAnimations = xDoc.createElement("animations")
+    xNode.appendChild(xAnimations)
 
-        for animation in meshData['animations']:
-            xml_save_animation(animation, xDoc, animations)
+    for animation in animations:
+        xml_save_animation(animation, xDoc, xAnimations)
 
 
 def xml_save_animation(animation, xDoc, xAnimations):
@@ -637,25 +639,28 @@ def xml_save_poses(meshData, xDoc, xMesh):
                 xPose.appendChild(xPoseVertex)
 
 
-def xml_save_skeleton_data(blenderMeshData, filepath):
+def xml_write_skeleton(skeleton, animations, xmlfile):
     from xml.dom.minidom import Document
-    if 'skeleton' in blenderMeshData:
-        skeleton = blenderMeshData['skeleton']
 
-        xDoc = Document()
-        xRoot = xDoc.createElement("skeleton")
-        xDoc.appendChild(xRoot)
-        skeleton.export_xml(xDoc, xRoot)
+    xDoc = Document()
+    xRoot = xDoc.createElement("skeleton")
+    xDoc.appendChild(xRoot)
+    skeleton.export_xml(xDoc, xRoot)
 
-        if 'animations' in blenderMeshData:
-            xml_save_animations(blenderMeshData, xRoot, xDoc)
+    if animations is not None:
+        xml_save_animations(animations, xRoot, xDoc)
 
-        nameOnly = os.path.splitext(filepath)[0]  # removing .mesh
-        xmlfile = nameOnly + ".skeleton.xml"
-        data = xDoc.toprettyxml(indent='    ')
-        f = open(xmlfile, 'wb')
+    data = xDoc.toprettyxml(indent='    ')
+    with open(xmlfile, 'wb') as f:
         f.write(bytes(data, 'utf-8'))
-        f.close()
+
+
+def xml_save_skeleton_data(blenderMeshData, filepath):
+    if 'skeleton' in blenderMeshData:
+        nameOnly = os.path.splitext(filepath)[0]  # removing .mesh
+        xml_write_skeleton(blenderMeshData['skeleton'],
+                           blenderMeshData.get('animations'),
+                           nameOnly + ".skeleton.xml")
 
 
 def xml_save_mesh_data(meshData, filepath, export_skeleton):

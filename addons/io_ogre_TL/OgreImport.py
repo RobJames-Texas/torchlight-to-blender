@@ -620,74 +620,94 @@ def xml_read_animation(action, tracks, integerFrames=True):
                     trackData[2].append([frame, (-x, z, y)])
 
 
-def blender_create_animations(meshData):
+def blender_calc_bone_translation_matrices(rig):
+    """Return {bone name: matrix} used to convert Ogre translation keys."""
+    mat = {}
+    fix1 = Matrix([(1, 0, 0), (0, 0, 1), (0, -1, 0)])
+    fix2 = Matrix([(0, 1, 0), (0, 0, 1), (1, 0, 0)])
+    for bone in rig.pose.bones:
+        if bone.parent:
+            mat[bone.name] = fix2 @ bone.parent.matrix.to_3x3().transposed() @ bone.matrix.to_3x3()
+        else:
+            mat[bone.name] = fix1 @ bone.matrix.to_3x3()
+    return mat
+
+
+def blender_create_action(rig, name, tracks, bone_matrices):
+    """Make one action for the armature from the track data of one animation.
+
+    tracks is {bone name: [positions, rotations, scales]}.
+    Return the new action and its slot.
+    """
     path_id = ['location', 'rotation_quaternion', 'scale']
 
+    action = bpy.data.actions.new(name)
+    print("Created action", name)
+    # Blender 5.x slotted actions: F-curves live in a channelbag
+    slot = action.slots.new(id_type='OBJECT', name=rig.name)
+    channelbag = action_ensure_channelbag_for_slot(action, slot)
+    groups = {}
+
+    # iterate target bones
+    for target in tracks:
+        data = tracks[target]
+        bone = rig.pose.bones[target]
+        if not bone:
+            continue  # error
+        bone.rotation_mode = 'QUATERNION'
+
+        # Fix rotation inversions
+        for i in range(1, len(data[1])):
+            a = data[1][i-1][1]
+            b = data[1][i][1]
+            dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3]
+            if dot < -0.8:
+                data[1][i][1] = (-b[0], -b[1], -b[2], -b[3])
+
+        # fix translation keys - rotate by inverse rest orientation
+        m = bone_matrices[target].transposed()
+        for i in range(0, len(data[0])):
+            v = Vector(data[0][i][1])
+            data[0][i][1] = m @ v
+
+        # create fcurves
+        for i in range(3):
+            if data[i]:
+                path = bone.path_from_id(path_id[i])
+                for channel in range(len(data[i][0][1])):
+                    if bone.name not in groups:
+                        groups[bone.name] = channelbag.groups.new(bone.name)
+                    curve = channelbag.fcurves.new(data_path=path,
+                                                   index=channel)
+                    curve.group = groups[bone.name]
+                    for key in data[i]:
+                        curve.keyframe_points.insert(key[0],
+                                                     key[1][channel])
+    return action, slot
+
+
+def blender_add_action_to_nla(animdata, name, action, slot):
+    """Add the action to a new muted NLA track."""
+    track = animdata.nla_tracks.new()
+    track.name = name
+    track.mute = True
+    strip = track.strips.new(name, 0, action)
+    strip.action_slot = slot
+
+
+def blender_create_animations(meshData):
     if 'animations' in meshData:
         rig = meshData['rig']
         rig.animation_data_create()
         animdata = rig.animation_data
 
         # calculate transformation matrices for translation
-        mat = {}
-        fix1 = Matrix([(1, 0, 0), (0, 0, 1), (0, -1, 0)])
-        fix2 = Matrix([(0, 1, 0), (0, 0, 1), (1, 0, 0)])
-        for bone in rig.pose.bones:
-            if bone.parent:
-                mat[bone.name] = fix2 @ bone.parent.matrix.to_3x3().transposed() @ bone.matrix.to_3x3()
-            else:
-                mat[bone.name] = fix1 @ bone.matrix.to_3x3()
+        mat = blender_calc_bone_translation_matrices(rig)
 
         for name in sorted(meshData['animations'].keys(), reverse=True):
-            action = bpy.data.actions.new(name)
-            print("Created action", name)
-            # Blender 5.x slotted actions: F-curves live in a channelbag
-            slot = action.slots.new(id_type='OBJECT', name=rig.name)
-            channelbag = action_ensure_channelbag_for_slot(action, slot)
-            groups = {}
-
-            # iterate target bones
-            for target in meshData['animations'][name]:
-                data = meshData['animations'][name][target]
-                bone = rig.pose.bones[target]
-                if not bone:
-                    continue  # error
-                bone.rotation_mode = 'QUATERNION'
-
-                # Fix rotation inversions
-                for i in range(1, len(data[1])):
-                    a = data[1][i-1][1]
-                    b = data[1][i][1]
-                    dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3]
-                    if dot < -0.8:
-                        data[1][i][1] = (-b[0], -b[1], -b[2], -b[3])
-
-                # fix translation keys - rotate by inverse rest orientation
-                m = mat[target].transposed()
-                for i in range(0, len(data[0])):
-                    v = Vector(data[0][i][1])
-                    data[0][i][1] = m @ v
-
-                # create fcurves
-                for i in range(3):
-                    if data[i]:
-                        path = bone.path_from_id(path_id[i])
-                        for channel in range(len(data[i][0][1])):
-                            if bone.name not in groups:
-                                groups[bone.name] = channelbag.groups.new(bone.name)
-                            curve = channelbag.fcurves.new(data_path=path,
-                                                           index=channel)
-                            curve.group = groups[bone.name]
-                            for key in data[i]:
-                                curve.keyframe_points.insert(key[0],
-                                                             key[1][channel])
-
-            # Add action to NLA track
-            track = animdata.nla_tracks.new()
-            track.name = name
-            track.mute = True
-            strip = track.strips.new(name, 0, action)
-            strip.action_slot = slot
+            action, slot = blender_create_action(
+                rig, name, meshData['animations'][name], mat)
+            blender_add_action_to_nla(animdata, name, action, slot)
 
 ###############################################################################
 
