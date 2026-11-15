@@ -455,7 +455,7 @@ def set_active_object(context, obj):
     context.view_layer.objects.active = obj
 
 
-def fileExist(filepath):
+def file_exist(filepath):
     try:
         filein = open(filepath)
         filein.close()
@@ -465,7 +465,7 @@ def fileExist(filepath):
         return False
 
 
-def toFmtStr(number):
+def to_fmt_str(number):
     # return str("%0.7f" % number)
     return str(round(number, 7))
 
@@ -540,23 +540,23 @@ def xml_save_geometry(geometry, xDoc, xMesh):
         xVertex = xDoc.createElement("vertex")
         xVertexBuffer.appendChild(xVertex)
         xPosition = xDoc.createElement("position")
-        xPosition.setAttribute("x", toFmtStr(vx[0]))
-        xPosition.setAttribute("y", toFmtStr(vx[2]))
-        xPosition.setAttribute("z", toFmtStr(-vx[1]))
+        xPosition.setAttribute("x", to_fmt_str(vx[0]))
+        xPosition.setAttribute("y", to_fmt_str(vx[2]))
+        xPosition.setAttribute("z", to_fmt_str(-vx[1]))
         xVertex.appendChild(xPosition)
 
         if isNormals:
             xNormal = xDoc.createElement("normal")
-            xNormal.setAttribute("x", toFmtStr(normals[i][0]))
-            xNormal.setAttribute("y", toFmtStr(normals[i][2]))
-            xNormal.setAttribute("z", toFmtStr(-normals[i][1]))
+            xNormal.setAttribute("x", to_fmt_str(normals[i][0]))
+            xNormal.setAttribute("y", to_fmt_str(normals[i][2]))
+            xNormal.setAttribute("z", to_fmt_str(-normals[i][1]))
             xVertex.appendChild(xNormal)
 
         if isTexCoordsSets:
             xUVSet = xDoc.createElement("texcoord")
             # take only 1st set for now
-            xUVSet.setAttribute("u", toFmtStr(uvSets[i][0][0]))
-            xUVSet.setAttribute("v", toFmtStr(1.0 - uvSets[i][0][1]))
+            xUVSet.setAttribute("u", to_fmt_str(uvSets[i][0][0]))
+            xUVSet.setAttribute("v", to_fmt_str(1.0 - uvSets[i][0][1]))
             xVertex.appendChild(xUVSet)
 
         if isColours:
@@ -568,18 +568,18 @@ def xml_save_geometry(geometry, xDoc, xMesh):
 
         if isTangents:
             xTangent = xDoc.createElement("tangent")
-            xTangent.setAttribute("x", toFmtStr(tangents[i][0]))
-            xTangent.setAttribute("y", toFmtStr(tangents[i][2]))
-            xTangent.setAttribute("z", toFmtStr(-tangents[i][1]))
+            xTangent.setAttribute("x", to_fmt_str(tangents[i][0]))
+            xTangent.setAttribute("y", to_fmt_str(tangents[i][2]))
+            xTangent.setAttribute("z", to_fmt_str(-tangents[i][1]))
             if isParity:
-                xTangent.setAttribute("w", toFmtStr(tangents[i][3]))
+                xTangent.setAttribute("w", to_fmt_str(tangents[i][3]))
             xVertex.appendChild(xTangent)
 
         if isBinormals:
             xBinormal = xDoc.createElement("binormal")
-            xBinormal.setAttribute("x", toFmtStr(binormals[i][0]))
-            xBinormal.setAttribute("y", toFmtStr(binormals[i][2]))
-            xBinormal.setAttribute("z", toFmtStr(-binormals[i][1]))
+            xBinormal.setAttribute("x", to_fmt_str(binormals[i][0]))
+            xBinormal.setAttribute("y", to_fmt_str(binormals[i][2]))
+            xBinormal.setAttribute("z", to_fmt_str(-binormals[i][1]))
             xVertex.appendChild(xBinormal)
 
 
@@ -785,7 +785,7 @@ def xml_save_material_data(filepath, meshData, overwriteMaterialFlag, copyTextur
                                   srcTextureFile)
                             srcTextureFile = os.path.join(
                                 baseDirName, srcTextureFile[2:])
-                        if fileExist(srcTextureFile):
+                        if file_exist(srcTextureFile):
                             # copy texture to dir
                             print("Copying texture \"%s\"" % srcTextureFile)
                             try:
@@ -1352,8 +1352,8 @@ def blender_collect_material_data(blenderMeshData, selectedObjects):
 
 
 
-def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
-                     export_skeleton, keep_xml, export_edgelists=False):
+def xml_to_ogre_convert(blenderMeshData, filepath, ogreXMLconverter,
+                        export_skeleton, keep_xml, export_edgelists=False):
 
     if ogreXMLconverter is None:
         return False
@@ -1513,12 +1513,12 @@ def save(operator, context, filepath,
                            overwrite_material,
                            copy_textures)
 
-    if not XMLtoOGREConvert(blenderMeshData,
-                            filepath,
-                            xml_converter,
-                            export_skeleton,
-                            keep_xml,
-                            export_edgelists):
+    if not xml_to_ogre_convert(blenderMeshData,
+                               filepath,
+                               xml_converter,
+                               export_skeleton,
+                               keep_xml,
+                               export_edgelists):
         operator.report({'WARNING'}, "Failed to convert .xml files to .mesh")
 
     print("done.")
