@@ -40,7 +40,7 @@ def GetValidBlenderName(name):
 
 
 
-def xOpenFile(filename):
+def xml_open_file(filename):
     xml_file = open(filename)
     try:
         xml_doc = minidom.parse(xml_file)
@@ -52,7 +52,7 @@ def xOpenFile(filename):
     return output
 
 
-def xCollectFaceData(facedata):
+def xml_collect_face_data(facedata):
     faces = []
     for face in facedata.childNodes:
         if face.localName == 'face':
@@ -64,7 +64,7 @@ def xCollectFaceData(facedata):
     return faces
 
 
-def xCollectVertexData(data, useNormals):
+def xml_collect_vertex_data(data, useNormals):
     vertexdata = {}
     vertices = []
     normals = []
@@ -123,7 +123,7 @@ def xCollectVertexData(data, useNormals):
     return vertexdata
 
 
-def xCollectMeshData(meshData, xmldoc, meshname, dirname, useNormals):
+def xml_collect_mesh_data(meshData, xmldoc, meshname, dirname, useNormals):
     # global has_skeleton
     faceslist = []
     subMeshData = []
@@ -136,7 +136,7 @@ def xCollectMeshData(meshData, xmldoc, meshname, dirname, useNormals):
     if(len(xmldoc.getElementsByTagName('sharedgeometry')) > 0):
         isSharedGeometry = True
         for subnodes in xmldoc.getElementsByTagName('sharedgeometry'):
-            meshData['sharedgeometry'] = xCollectVertexData(
+            meshData['sharedgeometry'] = xml_collect_vertex_data(
                 subnodes, useNormals)
 
         if hasSkeleton:
@@ -158,16 +158,16 @@ def xCollectMeshData(meshData, xmldoc, meshname, dirname, useNormals):
                     if subnodes.localName == 'faces':
                         facescount = int(
                             subnodes.getAttributeNode('count').value)
-                        sm['faces'] = xCollectFaceData(subnodes)
+                        sm['faces'] = xml_collect_face_data(subnodes)
 
-                        if len(xCollectFaceData(subnodes)) != facescount:
+                        if len(xml_collect_face_data(subnodes)) != facescount:
                             print("FacesCount doesn't match!")
                             break
 
                     if (subnodes.localName == 'geometry'):
                         vertexcount = int(
                             subnodes.getAttributeNode('vertexcount').value)
-                        sm['geometry'] = xCollectVertexData(
+                        sm['geometry'] = xml_collect_vertex_data(
                             subnodes, useNormals)
 
                     if hasSkeleton and (subnodes.localName == 'boneassignments'
@@ -308,7 +308,7 @@ def xCollectBoneAssignments(meshData, xmldoc):
     return VertexGroups
 
 
-def xCollectPoseData(meshData, xmldoc):
+def xml_collect_pose_data(meshData, xmldoc):
     poses = xmldoc.getElementsByTagName('pose')
     if(len(poses) > 0):
         meshData['poses'] = []
@@ -700,13 +700,13 @@ def bCreateAnimations(meshData):
 ###############################################################################
 
 
-def bCreateMesh(meshData, folder, name, filepath):
+def blender_create_mesh(meshData, folder, name, filepath):
     if 'skeleton' in meshData:
         skeletonName = meshData['skeletonName']
         bCreateSkeleton(meshData, skeletonName)
 
     # from collected data create all sub meshes
-    subObjs = bCreateSubMeshes(meshData, name)
+    subObjs = blender_create_submeshes(meshData, name)
 
     # Move to parent skeleton if there
     if 'armature' in meshData:
@@ -820,7 +820,7 @@ def bCreateSkeleton(meshData, name):
     bpy.context.view_layer.update()
 
 
-def bMergeVertices(subMesh):
+def blender_merge_vertices(subMesh):
     # This sort of works, but leaves all uv seams as sharp.
     geometry = subMesh['geometry']
     vertices = geometry['positions']
@@ -845,7 +845,7 @@ def bMergeVertices(subMesh):
             face[i] = map[face[i]]
 
 
-def bCreateSubMeshes(meshData, meshName):
+def blender_create_submeshes(meshData, meshName):
     allObjects = []
     submeshes = meshData['submeshes']
     scene = bpy.context.scene
@@ -1144,7 +1144,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
                 meshMaterials.append(pathMaterial)
 
     # try to parse xml file
-    xDocMeshData = xOpenFile(pathMeshXml)
+    xDocMeshData = xml_open_file(pathMeshXml)
 
     meshData = {}
     if xDocMeshData != "None":
@@ -1172,7 +1172,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
                 skeletonFileXml = skeletonFile + ".xml"
 
             # parse .xml skeleton file
-            xDocSkeletonData = xOpenFile(skeletonFileXml)
+            xDocSkeletonData = xml_open_file(skeletonFileXml)
             if xDocSkeletonData != "None":
                 xCollectBoneData(meshData, xDocSkeletonData)
                 meshData['skeletonName'] = os.path.basename(skeletonFile[:-9])
@@ -1193,16 +1193,16 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
 
         # collect mesh data
         print("collecting mesh data...")
-        xCollectMeshData(meshData, xDocMeshData,
+        xml_collect_mesh_data(meshData, xDocMeshData,
                          onlyName, folder, import_normals)
         xml_collect_material_data(meshData, meshMaterials, folder)
 
         if import_shapekeys:
-            xCollectPoseData(meshData, xDocMeshData)
+            xml_collect_pose_data(meshData, xDocMeshData)
 
         # after collecting is done, start creating stuff#
         # create skeleton (if any) and mesh from parsed data
-        bCreateMesh(meshData, folder, onlyName, pathMeshXml)
+        blender_create_mesh(meshData, folder, onlyName, pathMeshXml)
         bCreateAnimations(meshData)
         if not keep_xml:
             # cleanup by deleting the XML file we created
