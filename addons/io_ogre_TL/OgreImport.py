@@ -182,7 +182,7 @@ def xCollectMeshData(meshData, xmldoc, meshname, dirname, useNormals):
     return meshData
 
 
-def xCollectMaterialData(meshData, materialFiles, folder):
+def xml_collect_material_data(meshData, materialFiles, folder):
     data = []
     
     # Unpack file lists smoothly
@@ -1195,7 +1195,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
         print("collecting mesh data...")
         xCollectMeshData(meshData, xDocMeshData,
                          onlyName, folder, import_normals)
-        xCollectMaterialData(meshData, meshMaterials, folder)
+        xml_collect_material_data(meshData, meshMaterials, folder)
 
         if import_shapekeys:
             xCollectPoseData(meshData, xDocMeshData)
