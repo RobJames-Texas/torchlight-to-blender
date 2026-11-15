@@ -15,7 +15,7 @@ MIN_BONE_LENGTH = 0.00001  # Prevent automatic removal of bones
 # makes sure name doesn't exceeds blender naming limits
 # also keeps after name (as Torchlight uses names to identify types
 #  -boots, chest, ...- with names)
-def GetValidBlenderName(name):
+def get_valid_blender_name(name):
     maxChars = 63
 
     newname = name
@@ -150,7 +150,7 @@ def xml_collect_mesh_data(meshData, xmldoc, meshname, dirname, useNormals):
             if submesh.localName == 'submesh':
                 materialOrg = str(submesh.getAttributeNode('material').value)
                 # to avoid Blender naming limit problems
-                material = GetValidBlenderName(materialOrg)
+                material = get_valid_blender_name(materialOrg)
                 sm = {}
                 sm['material'] = material
                 sm['materialOrg'] = materialOrg
@@ -221,7 +221,7 @@ def xml_collect_material_data(meshData, materialFiles, folder):
     while i < len(tokens):
         if tokens[i].lower() == "material" and (i + 1) < len(tokens):
             raw_mat_name = tokens[i+1].strip('"')
-            mat_name = GetValidBlenderName(raw_mat_name)
+            mat_name = get_valid_blender_name(raw_mat_name)
             
             # Sub-parse everything strictly locked inside this specific material's scope
             allMaterials[mat_name] = {}
@@ -471,7 +471,7 @@ def calc_bone_head_positions(BonesData):
                 protmat = Matrix.Rotation(prot[3], 3, Vector(
                     [prot[0], prot[1], prot[2]])).inverted()
                 newposh = protmat.transposed() @ Vector([posh[0], posh[1], posh[2]])  # 03
-                positionh = VectorSum(ppos, newposh)
+                positionh = vector_sum(ppos, newposh)
 
                 posh = positionh
 
@@ -520,7 +520,7 @@ def calc_bone_rotations(BonesDic):
         data['rotmatAS'] = world_matrix.to_3x3()
 
 
-def VectorSum(vec1, vec2):
+def vector_sum(vec1, vec2):
     vecout = [0, 0, 0]
     vecout[0] = vec1[0]+vec2[0]
     vecout[1] = vec1[1]+vec2[1]
@@ -531,18 +531,18 @@ def VectorSum(vec1, vec2):
 
 ###############################################################################
 
-def scnUpdate():
+def scn_update():
     bpy.context.view_layer.update()
 
 
-def quaternionFromAngleAxis(angle, x, y, z):
+def quaternion_from_angle_axis(angle, x, y, z):
     r = angle * 0.5
     s = math.sin(r)
     c = math.cos(r)
     return (c, x*s, y*s, z*s)
 
 
-def xGetChild(node, tag):
+def xml_get_child(node, tag):
     for n in node.childNodes:
         if n.nodeType == 1 and n.tagName == tag:
             return n
@@ -556,10 +556,10 @@ def xml_analyse_fps(xDoc):
     for container in xDoc.getElementsByTagName('animations'):
         for animation in container.childNodes:
             if animation.nodeType == 1 and animation.tagName == 'animation':
-                tracks = xGetChild(animation, 'tracks')
+                tracks = xml_get_child(animation, 'tracks')
                 for track in tracks.childNodes:
                     if track.nodeType == 1:
-                        for keyframe in xGetChild(track,
+                        for keyframe in xml_get_child(track,
                                                   'keyframes').childNodes:
                             if keyframe.nodeType == 1:
                                 time = float(keyframe.getAttribute('time'))
@@ -582,7 +582,7 @@ def xml_collect_animations(meshData, xDoc, integerFrames=True):
 
                 # read action data
                 action = {}
-                tracks = xGetChild(animation, 'tracks')
+                tracks = xml_get_child(animation, 'tracks')
                 xml_read_animation(action, tracks.childNodes, integerFrames)
                 meshData['animations'][name] = action
 
@@ -594,7 +594,7 @@ def xml_read_animation(action, tracks, integerFrames=True):
             continue
         target = track.getAttribute('bone')
         action[target] = trackData = [[] for i in range(3)]  # pos, rot, scl
-        for keyframe in xGetChild(track, 'keyframes').childNodes:
+        for keyframe in xml_get_child(track, 'keyframes').childNodes:
             if keyframe.nodeType != 1:
                 continue
             time = float(keyframe.getAttribute('time'))
@@ -610,14 +610,14 @@ def xml_read_animation(action, tracks, integerFrames=True):
                     z = float(key.getAttribute('z'))
                     trackData[0].append([frame, (x, y, z)])
                 elif key.tagName == 'rotate':
-                    axis = xGetChild(key, 'axis')
+                    axis = xml_get_child(key, 'axis')
                     angle = key.getAttribute('angle')
                     x = axis.getAttribute('x')
                     y = axis.getAttribute('y')
                     z = axis.getAttribute('z')
                     # skip if axis contains #INF or #IND
                     if '#' not in x and '#' not in y and '#' not in z:
-                        quat = quaternionFromAngleAxis(
+                        quat = quaternion_from_angle_axis(
                             float(angle), float(z), float(x), float(y))
                         trackData[1].append([frame, quat])
                 elif key.tagName == 'scale':
@@ -741,9 +741,9 @@ def blender_create_skeleton(meshData, name):
     rig.display_type = 'WIRE'
 
     # Link object to scene
-    addObjectToScene(bpy.context, rig)
-    setActiveObject(bpy.context, rig)
-    scnUpdate()
+    add_object_to_scene(bpy.context, rig)
+    set_active_object(bpy.context, rig)
+    scn_update()
 
     # Choose default length of bones with no children
     averageBone = 0
@@ -1062,7 +1062,7 @@ def blender_create_submeshes(meshData, meshName):
     return allObjects
 
 
-def convertXML(convertor, filename, use_existing=True):
+def convert_xml(convertor, filename, use_existing=True):
     print('create xml', filename)
     if filename.endswith('.xml'):
         return True
@@ -1080,19 +1080,19 @@ def convertXML(convertor, filename, use_existing=True):
             return False
 
 
-def setActiveObject(context, obj):
+def set_active_object(context, obj):
     context.view_layer.objects.active = obj
 
 
-def addObjectToScene(context, obj):
+def add_object_to_scene(context, obj):
     context.scene.collection.objects.link(obj)
 
 
-def removeObjectFromScene(context, obj):
+def remove_object_from_scene(context, obj):
     context.scene.collection.objects.unlink(obj)
 
 
-def getBoneNameMapFromArmature(arm):
+def get_bone_name_map_from_armature(arm):
     # No mode switches or operators needed. 'OGREID' is set as a custom property
     # on edit bones during import and persists on the armature's Bone data
     # (not on pose bones).
@@ -1115,7 +1115,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
     pathMeshXml = filepath
     # get the mesh as .xml file
     if filepath.lower().endswith(".mesh"):
-        if convertXML(xml_converter, filepath):
+        if convert_xml(xml_converter, filepath):
             pathMeshXml = filepath + ".xml"
         else:
             operator.report({'ERROR'}, "Failed to convert .mesh files to .xml")
@@ -1158,7 +1158,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
                 and context.active_object
                 and context.active_object.type == 'ARMATURE') else None
         if selectedSkeleton:
-            map = getBoneNameMapFromArmature(selectedSkeleton)
+            map = get_bone_name_map_from_armature(selectedSkeleton)
             if map:
                 meshData['boneIDs'] = map
                 meshData['armature'] = selectedSkeleton
@@ -1168,7 +1168,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
 
         # there is valid skeleton link and existing file
         elif(skeletonFile != "None"):
-            if convertXML(xml_converter, skeletonFile):
+            if convert_xml(xml_converter, skeletonFile):
                 skeletonFileXml = skeletonFile + ".xml"
 
             # parse .xml skeleton file
