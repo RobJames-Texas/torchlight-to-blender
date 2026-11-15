@@ -549,7 +549,7 @@ def xGetChild(node, tag):
     return None
 
 
-def xAnalyseFPS(xDoc):
+def xml_analyse_fps(xDoc):
     fps = 0
     lastTime = 1e8
     samples = 0
@@ -572,7 +572,7 @@ def xAnalyseFPS(xDoc):
     return round(fps, 2)
 
 
-def xCollectAnimations(meshData, xDoc, integerFrames=True):
+def xml_collect_animations(meshData, xDoc, integerFrames=True):
     if 'animations' not in meshData:
         meshData['animations'] = {}
     for container in xDoc.getElementsByTagName('animations'):
@@ -583,11 +583,11 @@ def xCollectAnimations(meshData, xDoc, integerFrames=True):
                 # read action data
                 action = {}
                 tracks = xGetChild(animation, 'tracks')
-                xReadAnimation(action, tracks.childNodes, integerFrames)
+                xml_read_animation(action, tracks.childNodes, integerFrames)
                 meshData['animations'][name] = action
 
 
-def xReadAnimation(action, tracks, integerFrames=True):
+def xml_read_animation(action, tracks, integerFrames=True):
     fps = bpy.context.scene.render.fps
     for track in tracks:
         if track.nodeType != 1:
@@ -627,7 +627,7 @@ def xReadAnimation(action, tracks, integerFrames=True):
                     trackData[2].append([frame, (-x, z, y)])
 
 
-def bCreateAnimations(meshData):
+def blender_create_animations(meshData):
     path_id = ['location', 'rotation_quaternion', 'scale']
 
     if 'animations' in meshData:
@@ -1179,11 +1179,11 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
 
                 # parse animations
                 if import_animations:
-                    fps = xAnalyseFPS(xDocSkeletonData)
+                    fps = xml_analyse_fps(xDocSkeletonData)
                     if(fps and round_frames):
                         print("Setting FPS to", fps)
                         bpy.context.scene.render.fps = int(round(fps))
-                    xCollectAnimations(meshData,
+                    xml_collect_animations(meshData,
                                        xDocSkeletonData,
                                        round_frames)
 
@@ -1203,7 +1203,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
         # after collecting is done, start creating stuff#
         # create skeleton (if any) and mesh from parsed data
         blender_create_mesh(meshData, folder, onlyName, pathMeshXml)
-        bCreateAnimations(meshData)
+        blender_create_animations(meshData)
         if not keep_xml:
             # cleanup by deleting the XML file we created
             os.unlink("%s" % pathMeshXml)
