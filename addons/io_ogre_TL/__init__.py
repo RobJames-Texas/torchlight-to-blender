@@ -403,7 +403,6 @@ class EXPORT_SCENE_OT_mesh(bpy.types.Operator, ExportHelper):
 
     def execute(self, context):
         from . import OgreExport
-        from mathutils import Matrix
 
         keywords = self.as_keywords(ignore=("check_existing", "filter_glob"))
         keywords['xml_converter'] = findConverter(

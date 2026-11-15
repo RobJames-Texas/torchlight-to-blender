@@ -1,10 +1,7 @@
 import bpy
 import os
 import sys
-import logging
 import pickle
-import mathutils
-from pprint import pprint
 from bpy.props import *
 
 # Most of this borrowed from OgreCave blender2ogre addon.
@@ -12,9 +9,6 @@ from bpy.props import *
 CONFIG_PATH = bpy.utils.user_resource('CONFIG', path='scripts', create=True)
 CONFIG_FILENAME = 'io_ogre_TL.pickle'
 CONFIG_FILEPATH = os.path.join(CONFIG_PATH, CONFIG_FILENAME)
-
-_CONFIG_DEFAULTS_ALL = {
-}
 
 _CONFIG_TAGS_ = 'OGRETOOLS_XML_CONVERTER'.split()
 
@@ -60,10 +54,6 @@ def load_config():
         except Exception:
             print('[ERROR]: Can not read config from %s' % CONFIG_FILEPATH)
 
-    for tag in _CONFIG_DEFAULTS_ALL:
-        if tag not in config_dict:
-            config_dict[tag] = _CONFIG_DEFAULTS_ALL[tag]
-
     for tag in _CONFIG_TAGS_:
         if tag not in config_dict:
             if sys.platform.startswith('win'):
@@ -103,20 +93,9 @@ CONFIG = load_config()
 
 
 def get(name, default=None):
-    global CONFIG
     if name in CONFIG:
         return CONFIG[name]
     return default
-
-
-def update(**kwargs):
-    for k, v in kwargs.items():
-        if k not in _CONFIG_DEFAULTS_ALL:
-            print(
-                "trying to set CONFIG['%s']=%s, but is not a known"
-                " config setting" % (k, v))
-        CONFIG[k] = v
-    save_config()
 
 
 def save_config(context=None):
@@ -127,7 +106,6 @@ def save_config(context=None):
     ``save_config(bpy.context)`` whenever you want config synced back into
     extension preferences.
     """
-    global CONFIG
     if os.path.isdir(CONFIG_PATH):
         try:
             with open(CONFIG_FILEPATH, 'wb') as f:
@@ -167,47 +145,3 @@ def sync_preferences_to_config(context=None):
         pref_value = getattr(addon_preferences, prop_name, None)
         if pref_value is not None and pref_value != "":
             CONFIG[key] = pref_value
-
-
-def config_to_preferences(context=None):
-    """Sync CONFIG dict → extension preferences (for migration)."""
-    if context is None:
-        context = bpy.context
-    addon_preferences = get_preferences(context)
-    if addon_preferences is None:
-        return
-
-    for key in _CONFIG_TAGS_:
-        prop_name = _PREF_PROP_NAMES[key]
-        value = CONFIG.get(key, '')
-        setattr(addon_preferences, prop_name, value)
-
-
-def migrate_preferences(context=None):
-    """Migrate old pickle-based config → extension preferences.
-
-    Called during addon registration. If the user has a legacy pickle file
-    with a custom OgreXmlConverter path, that value is written into the new
-    Blender 5.x extension preferences so it persists across restarts.
-    Also writes platform defaults when no custom path exists anywhere.
-    """
-    if context is None:
-        context = bpy.context
-
-    addon_preferences = get_preferences(context)
-    if addon_preferences is None:
-        return
-
-    # Determine which source to use (pickle > platform default)
-    for key in _CONFIG_TAGS_:
-        prop_name = _PREF_PROP_NAMES[key]
-        # If user has already set a value via extension prefs, don't overwrite
-        current = getattr(addon_preferences, prop_name, None)
-        if current is not None and current != "":
-            continue  # skip — already configured
-        # Use config.py's resolved value (pickle or platform default)
-        value = CONFIG.get(key, '')
-        setattr(addon_preferences, prop_name, value)
-
-    # Also update pickle with any extension pref values for backwards compat
-    save_config(context)
