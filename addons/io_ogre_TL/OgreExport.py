@@ -718,7 +718,7 @@ def xml_save_mesh_data(meshData, filepath, export_skeleton):
     fileWr.close()
 
 
-def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
+def xml_save_material_data(filepath, meshData, overwriteMaterialFlag, copyTextures):
     if 'materials' not in meshData:
         return
 
@@ -1263,7 +1263,7 @@ def blender_collect_skeleton_data(blenderMeshData, selectedObjects, sort):
         blenderMeshData['skeleton'] = skeleton
 
 
-def bCollectMaterialData(blenderMeshData, selectedObjects):
+def blender_collect_material_data(blenderMeshData, selectedObjects):
     allMaterials = {}
     blenderMeshData['materials'] = allMaterials
 
@@ -1344,7 +1344,7 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                             if texImage and texImage.image:
                                 texInfo = {}
                                 texInfo['texture'] = \
-                                    getTextureFileName(texImage.image)
+                                    get_texture_file_name(texImage.image)
                                 texInfo['texture_path'] = \
                                     texImage.image.filepath
                                 matInfo['textures'].append(texInfo)
@@ -1394,7 +1394,7 @@ def select_get(obj):
     return obj.select_get()
 
 
-def getTextureFileName(image):
+def get_texture_file_name(image):
     """Return the texture file name to write in the .material file.
 
     Use the file name of the image, not the name of the Blender image.
@@ -1480,7 +1480,7 @@ def save(operator, context, filepath,
                                            export_poses)
     # materials
     if export_materials:
-        bCollectMaterialData(blenderMeshData, selectedObjects)
+        blender_collect_material_data(blenderMeshData, selectedObjects)
 
     if tangent_parity:
         # Honor the "Parity in W" checkbox: store parity in the tangent W component.
@@ -1508,10 +1508,10 @@ def save(operator, context, filepath,
 
     xml_save_mesh_data(blenderMeshData, filepath, export_skeleton)
 
-    xSaveMaterialData(filepath,
-                      blenderMeshData,
-                      overwrite_material,
-                      copy_textures)
+    xml_save_material_data(filepath,
+                           blenderMeshData,
+                           overwrite_material,
+                           copy_textures)
 
     if not XMLtoOGREConvert(blenderMeshData,
                             filepath,
