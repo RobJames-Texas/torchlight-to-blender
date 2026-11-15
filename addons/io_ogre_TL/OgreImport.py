@@ -142,7 +142,7 @@ def xml_collect_mesh_data(meshData, xmldoc, meshname, dirname, useNormals):
         if hasSkeleton:
             for subnodes in xmldoc.getElementsByTagName('boneassignments'):
                 meshData['sharedgeometry']['boneassignments'] = \
-                    xCollectBoneAssignments(meshData, subnodes)
+                    xml_collect_bone_assignments(meshData, subnodes)
 
     # collect submeshes data
     for submeshes in xmldoc.getElementsByTagName('submeshes'):
@@ -173,7 +173,7 @@ def xml_collect_mesh_data(meshData, xmldoc, meshname, dirname, useNormals):
                     if hasSkeleton and (subnodes.localName == 'boneassignments'
                                         and isSharedGeometry is False):
                         sm['geometry']['boneassignments'] = \
-                            xCollectBoneAssignments(meshData, subnodes)
+                            xml_collect_bone_assignments(meshData, subnodes)
 
                 subMeshData.append(sm)
 
@@ -278,7 +278,7 @@ def xml_collect_material_data(meshData, materialFiles, folder):
     meshData['materials'] = allMaterials
 
 
-def xCollectBoneAssignments(meshData, xmldoc):
+def xml_collect_bone_assignments(meshData, xmldoc):
     boneIDtoName = meshData['boneIDs']
 
     VertexGroups = {}
@@ -330,7 +330,7 @@ def xml_collect_pose_data(meshData, xmldoc):
                 data.append((index, x, -z, y))
 
 
-def xGetSkeletonLink(xmldoc, folder, operator):
+def xml_get_skeleton_link(xmldoc, folder, operator):
     skeletonFile = "None"
     if(len(xmldoc.getElementsByTagName("skeletonlink")) > 0):
         # get the skeleton link of the mesh
@@ -349,8 +349,8 @@ def xGetSkeletonLink(xmldoc, folder, operator):
     return skeletonFile
 
 
-# def xCollectBoneData(meshData, xDoc, name, folder):
-def xCollectBoneData(meshData, xDoc):
+# def xml_collect_bone_data(meshData, xDoc, name, folder):
+def xml_collect_bone_data(meshData, xDoc):
     OGRE_Bones = {}
     BoneIDToName = {}
     meshData['skeleton'] = OGRE_Bones
@@ -390,22 +390,22 @@ def xCollectBoneData(meshData, xDoc):
                 OGRE_Bones[Bone]['parent'] = Parent
 
     # update Ogre bones with list of children
-    calcBoneChildren(OGRE_Bones)
+    calc_bone_children(OGRE_Bones)
 
     # helper bones
-    calcHelperBones(OGRE_Bones)
-    calcZeroBones(OGRE_Bones)
+    calc_helper_bones(OGRE_Bones)
+    calc_zero_bones(OGRE_Bones)
 
     # update Ogre bones with head positions
-    calcBoneHeadPositions(OGRE_Bones)
+    calc_bone_head_positions(OGRE_Bones)
 
     # update Ogre bones with rotation matrices
-    calcBoneRotations(OGRE_Bones)
+    calc_bone_rotations(OGRE_Bones)
 
     return OGRE_Bones
 
 
-def calcBoneChildren(BonesData):
+def calc_bone_children(BonesData):
     for bone in BonesData.keys():
         childlist = []
         for key in BonesData.keys():
@@ -416,7 +416,7 @@ def calcBoneChildren(BonesData):
         BonesData[bone]['children'] = childlist
 
 
-def calcHelperBones(BonesData):
+def calc_helper_bones(BonesData):
     count = 0
     helperBones = {}
     for bone in BonesData.keys():
@@ -435,7 +435,7 @@ def calcHelperBones(BonesData):
         BonesData[hBone] = helperBones[hBone]
 
 
-def calcZeroBones(BonesData):
+def calc_zero_bones(BonesData):
     zeroBones = {}
     for bone in BonesData.keys():
         pos = BonesData[bone]['position']
@@ -456,7 +456,7 @@ def calcZeroBones(BonesData):
         BonesData[hBone] = zeroBones[hBone]
 
 
-def calcBoneHeadPositions(BonesData):
+def calc_bone_head_positions(BonesData):
     for key in BonesData.keys():
 
         start = 0
@@ -482,7 +482,7 @@ def calcBoneHeadPositions(BonesData):
         BonesData[key]['posHAS'] = posh
 
 
-def calcBoneRotations(BonesDic):
+def calc_bone_rotations(BonesDic):
     #  FIXED FOR 5.x: Pure memory-space matrix calculations. Zero object/scene pollution!
     from mathutils import Matrix, Vector
     
@@ -703,7 +703,7 @@ def bCreateAnimations(meshData):
 def blender_create_mesh(meshData, folder, name, filepath):
     if 'skeleton' in meshData:
         skeletonName = meshData['skeletonName']
-        bCreateSkeleton(meshData, skeletonName)
+        blender_create_skeleton(meshData, skeletonName)
 
     # from collected data create all sub meshes
     subObjs = blender_create_submeshes(meshData, name)
@@ -729,7 +729,7 @@ def blender_create_mesh(meshData, folder, name, filepath):
         fileWr.close()
 
 
-def bCreateSkeleton(meshData, name):
+def blender_create_skeleton(meshData, name):
     if 'skeleton' not in meshData:
         return
     bonesData = meshData['skeleton']
@@ -1150,7 +1150,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
     if xDocMeshData != "None":
         # skeleton data
         # get the mesh as .xml file
-        skeletonFile = xGetSkeletonLink(xDocMeshData, folder, operator)
+        skeletonFile = xml_get_skeleton_link(xDocMeshData, folder, operator)
 
         # use selected skeleton
         selectedSkeleton = context.active_object \
@@ -1174,7 +1174,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
             # parse .xml skeleton file
             xDocSkeletonData = xml_open_file(skeletonFileXml)
             if xDocSkeletonData != "None":
-                xCollectBoneData(meshData, xDocSkeletonData)
+                xml_collect_bone_data(meshData, xDocSkeletonData)
                 meshData['skeletonName'] = os.path.basename(skeletonFile[:-9])
 
                 # parse animations
