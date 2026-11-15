@@ -105,7 +105,6 @@ class Skeleton(object):
         set_is_hidden(self.armature, False)
 
         # get ogre bone ids - need to be in edit mode to access edit_bones
-        # prev = bpy.context.scene.objects.active
         prev = bpy.context.object
         set_active_object(bpy.context, self.armature)
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
@@ -289,7 +288,6 @@ def blender_sample_pose_keyframes(armature, frame_range, fps, step=1):
     mat = {}
     hidden = get_is_hidden(armature)
     set_is_hidden(armature, False)
-    # prev = bpy.context.scene.objects.active
     prev = bpy.context.object
     set_active_object(bpy.context, armature)
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
@@ -509,7 +507,6 @@ def xml_save_geometry(geometry, xDoc, xMesh):
         xVertexBuffer.setAttribute("normals", "true")
     if isTexCoordsSets:
         xVertexBuffer.setAttribute("texture_coord_dimensions_0", "2")
-        # str(texCoordSets)) # Only export one set
         xVertexBuffer.setAttribute("texture_coords", "1")
 
     if isColours:
@@ -653,7 +650,6 @@ def xml_save_skeleton_data(blenderMeshData, filepath):
         if 'animations' in blenderMeshData:
             xml_save_animations(blenderMeshData, xRoot, xDoc)
 
-        # xmlfile = os.path.join(filepath, '%s.skeleton.xml' %name )
         nameOnly = os.path.splitext(filepath)[0]  # removing .mesh
         xmlfile = nameOnly + ".skeleton.xml"
         data = xDoc.toprettyxml(indent='    ')
@@ -666,9 +662,6 @@ def xml_save_mesh_data(meshData, filepath, export_skeleton):
     from xml.dom.minidom import Document
 
     hasSharedGeometry = False
-#   Torchlight does not like shared geometry
-#    if 'sharedgeometry' in meshData:
-#        hasSharedGeometry = True
 
     # Create the minidom document
     print("Creating " + filepath + ".xml")
@@ -701,7 +694,6 @@ def xml_save_mesh_data(meshData, filepath, export_skeleton):
     # Print our newly created XML
     fileWr = open(filepath + ".xml", 'w')
     fileWr.write(xDoc.toprettyxml(indent="    "))  # 4 spaces
-    # doc.writexml(fileWr, "  ")
     fileWr.close()
 
 
@@ -831,7 +823,6 @@ def blender_collect_mesh_data(meshData, context, selectedObjects,
     wantTangents, wantBinormals = exportTangents, exportBinormals
     for ob in selectedObjects:
         exportTangents, exportBinormals = wantTangents, wantBinormals
-        # ob = bpy.types.Object ##
         materials = []
         for mat in ob.data.materials:
             if mat:
@@ -1029,7 +1020,6 @@ def blender_collect_mesh_data_original(meshData, context, selectedObjects,
     for ob in selectedObjects:
         exportTangents, exportBinormals = wantTangents, wantBinormals
         subMeshData = {}
-        # ob = bpy.types.Object ##
         materialName = ob.name
         for m in ob.data.materials:
             if m:
@@ -1242,7 +1232,6 @@ def blender_collect_material_data(blenderMeshData, selectedObjects):
     for ob in selectedObjects:
         if ob.type == 'MESH' and len(ob.data.materials) > 0:
             for mat in ob.data.materials:
-                # mat = bpy.types.Material ##
                 if mat and mat.name not in allMaterials:
                     matInfo = {}
                     bsdf = None

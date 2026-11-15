@@ -296,7 +296,6 @@ def xml_collect_bone_assignments(meshData, xmldoc):
                 VGNew = VG
             verti = int(vg.getAttributeNode('vertexindex').value)
             weight = float(vg.getAttributeNode('weight').value)
-            # print("bone=%s, vert=%s, weight=%s" % (VGNew,verti,weight))
             VertexGroups[VGNew].append([verti, weight])
 
     return VertexGroups
@@ -661,7 +660,6 @@ def blender_create_animations(meshData):
                     b = data[1][i][1]
                     dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3]
                     if dot < -0.8:
-                        # print('fix inversion', name, target)
                         data[1][i][1] = (-b[0], -b[1], -b[2], -b[3])
 
                 # fix translation keys - rotate by inverse rest orientation
@@ -908,7 +906,6 @@ def blender_create_submeshes(meshData, meshName):
 
                 uvmap = mat.node_tree.nodes.new(type='ShaderNodeUVMap')
                 uvmap.uv_map = 'UVLayer0'
-                #links.new(uvmap.outputs['UV'], node_texture.inputs['Vector'])
                 if len(uvmap.outputs) > 0 and len(node_texture.inputs) > 0:
                     links.new(uvmap.outputs[0], node_texture.inputs[0])
             
