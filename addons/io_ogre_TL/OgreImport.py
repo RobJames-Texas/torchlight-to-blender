@@ -681,8 +681,9 @@ def blender_create_action(rig, name, tracks, bone_matrices):
                                                    index=channel)
                     curve.group = groups[bone.name]
                     for key in data[i]:
-                        curve.keyframe_points.insert(key[0],
-                                                     key[1][channel])
+                        point = curve.keyframe_points.insert(key[0],
+                                                             key[1][channel])
+                        point.interpolation = 'LINEAR'
     return action, slot
 
 
