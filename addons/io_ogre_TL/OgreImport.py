@@ -1,7 +1,7 @@
 import subprocess
 import os
 import math
-from mathutils import Vector, Matrix
+from mathutils import Vector, Matrix, Quaternion
 import bpy
 from xml.dom import minidom
 from bpy_extras.anim_utils import action_ensure_channelbag_for_slot
@@ -784,6 +784,12 @@ def blender_create_skeleton(meshData, name):
             boneObj['OGREID'] = boneData['id']
             print('bone', boneData['id'], boneName)
 
+        # Store the Ogre rest pose. Animation files have their own rest pose.
+        # The animation import uses this to make the keys relative to this one.
+        if 'position' in boneData and 'rotation' in boneData:
+            boneObj['OGRE_POS'] = list(boneData['position'])
+            boneObj['OGRE_ROT'] = list(boneData['rotation'])  # axis x, y, z, angle
+
         headPos = boneData['posHAS']
         tailVector = 0
         if len(children) > 0:
@@ -1086,6 +1092,229 @@ def get_bone_name_map_from_armature(arm):
             boneMap[str(bone['OGREID'])] = bone.name
             
     return boneMap
+
+
+def xml_collect_bone_names(xDoc):
+    """Return the set of bone names in a skeleton XML document."""
+    names = set()
+    for bones in xDoc.getElementsByTagName('bones'):
+        for bone in bones.childNodes:
+            if bone.nodeType == 1 and bone.tagName == 'bone':
+                names.add(bone.getAttribute('name'))
+    return names
+
+
+REST_TOLERANCE = 1e-5
+
+
+def make_rest_quaternion(axis, angle):
+    axis = Vector(axis)
+    if axis.length < 1e-9:
+        return Quaternion()
+    return Quaternion(axis, angle)
+
+
+def xml_get_rest_pose(xDoc):
+    """Return {bone name: (position, rotation)} of the bones in a skeleton XML."""
+    rest = {}
+    for bones in xDoc.getElementsByTagName('bones'):
+        for bone in bones.childNodes:
+            if bone.nodeType != 1 or bone.tagName != 'bone':
+                continue
+            pos = xml_get_child(bone, 'position')
+            rot = xml_get_child(bone, 'rotation')
+            if pos is None or rot is None:
+                continue
+            axis = xml_get_child(rot, 'axis')
+            rest[bone.getAttribute('name')] = (
+                Vector([float(pos.getAttribute(c)) for c in 'xyz']),
+                make_rest_quaternion(
+                    [float(axis.getAttribute(c)) for c in 'xyz'],
+                    float(rot.getAttribute('angle'))))
+    return rest
+
+
+def blender_get_rest_pose(rig):
+    """Return the same as xml_get_rest_pose from the data stored on the bones."""
+    rest = {}
+    for bone in rig.data.bones:
+        if 'OGRE_POS' in bone and 'OGRE_ROT' in bone:
+            rot = bone['OGRE_ROT']
+            rest[bone.name] = (Vector(bone['OGRE_POS']),
+                               make_rest_quaternion(rot[0:3], rot[3]))
+    return rest
+
+
+def xml_get_vector_attrs(node):
+    return Vector([float(node.getAttribute(c)) for c in 'xyz'])
+
+
+def xml_set_keyframe(xDoc, keyframe, offset_pos, offset_rot):
+    """Add offset_pos to the translation and apply offset_rot before the rotation."""
+    translate = xml_get_child(keyframe, 'translate')
+    if translate is None:
+        translate = xDoc.createElement('translate')
+        for c in 'xyz':
+            translate.setAttribute(c, '0')
+        keyframe.appendChild(translate)
+    rotate = xml_get_child(keyframe, 'rotate')
+    if rotate is None:
+        rotate = xDoc.createElement('rotate')
+        rotate.setAttribute('angle', '0')
+        keyframe.appendChild(rotate)
+    axis = xml_get_child(rotate, 'axis')
+    if axis is None:
+        axis = xDoc.createElement('axis')
+        for c, v in zip('xyz', (1, 0, 0)):
+            axis.setAttribute(c, str(v))
+        rotate.appendChild(axis)
+
+    pos = xml_get_vector_attrs(translate) + offset_pos
+    rot = offset_rot @ make_rest_quaternion(xml_get_vector_attrs(axis),
+                                            float(rotate.getAttribute('angle')))
+    new_axis, angle = rot.to_axis_angle()
+    for c, v in zip('xyz', pos):
+        translate.setAttribute(c, repr(v))
+    for c, v in zip('xyz', new_axis):
+        axis.setAttribute(c, repr(v))
+    rotate.setAttribute('angle', repr(angle))
+
+
+def xml_apply_rest_difference(xDoc, armature_rest):
+    """Make the keys offsets from the armature rest pose.
+
+    An animation file has its own rest pose for each bone, and its keys are
+    offsets from that pose. The mesh uses the rest pose of the main skeleton.
+    Bones without a track get a track with one key, so they keep the pose
+    of the file. Return the number of bones that differ.
+    """
+    changed = {}
+    for name, (pos, rot) in xml_get_rest_pose(xDoc).items():
+        if name not in armature_rest:
+            continue
+        armature_pos, armature_rot = armature_rest[name]
+        offset_pos = pos - armature_pos
+        offset_rot = armature_rot.inverted() @ rot
+        if (offset_pos.length > REST_TOLERANCE
+                or offset_rot.angle > REST_TOLERANCE):
+            changed[name] = (offset_pos, offset_rot)
+    if not changed:
+        return 0
+
+    for container in xDoc.getElementsByTagName('animations'):
+        for animation in container.childNodes:
+            if animation.nodeType != 1 or animation.tagName != 'animation':
+                continue
+            tracks = xml_get_child(animation, 'tracks')
+            with_track = set()
+            for track in tracks.childNodes:
+                if track.nodeType != 1:
+                    continue
+                bone = track.getAttribute('bone')
+                with_track.add(bone)
+                if bone in changed:
+                    keyframes = xml_get_child(track, 'keyframes')
+                    for keyframe in keyframes.childNodes:
+                        if keyframe.nodeType == 1:
+                            xml_set_keyframe(xDoc, keyframe, *changed[bone])
+            for bone in sorted(set(changed) - with_track):
+                track = xDoc.createElement('track')
+                track.setAttribute('bone', bone)
+                keyframes = xDoc.createElement('keyframes')
+                keyframe = xDoc.createElement('keyframe')
+                keyframe.setAttribute('time', '0')
+                keyframes.appendChild(keyframe)
+                track.appendChild(keyframes)
+                tracks.appendChild(track)
+                xml_set_keyframe(xDoc, keyframe, *changed[bone])
+    return len(changed)
+
+
+def blender_remove_action(rig, name):
+    """Remove the action and the NLA track with this name from the armature."""
+    animdata = rig.animation_data
+    if animdata:
+        for track in list(animdata.nla_tracks):
+            if track.name == name:
+                animdata.nla_tracks.remove(track)
+    action = bpy.data.actions.get(name)
+    if action:
+        bpy.data.actions.remove(action)
+
+
+def load_animations(operator, context, filepaths, xml_converter=None,
+                    keep_xml=False, round_frames=True,
+                    existing_action='SKIP'):
+    """Import individual .skeleton animation files for the active armature."""
+    rig = context.active_object
+    if rig is None or rig.type != 'ARMATURE':
+        operator.report({'ERROR'}, "Select an armature first.")
+        return {'CANCELLED'}
+    rig.animation_data_create()
+    bone_matrices = blender_calc_bone_translation_matrices(rig)
+    armature_bones = set(rig.pose.bones.keys())
+    armature_rest = blender_get_rest_pose(rig)
+    if not armature_rest:
+        operator.report({'WARNING'},
+                        "The armature has no stored rest pose. Import the mesh "
+                        "again to adjust the keys to the rest pose of the files.")
+
+    fps_set = False
+    imported = 0
+    files_done = 0
+    for filepath in filepaths:
+        fname = os.path.basename(filepath)
+        if not convert_xml(xml_converter, filepath, use_existing=False):
+            operator.report({'WARNING'}, "%s: failed to convert to .xml" % fname)
+            continue
+        xmlpath = filepath + ".xml"
+        xDoc = xml_open_file(xmlpath)
+        if not keep_xml:
+            os.unlink(xmlpath)
+        if xDoc == "None":
+            operator.report({'WARNING'}, "%s: failed to read the file" % fname)
+            continue
+
+        missing = xml_collect_bone_names(xDoc) - armature_bones
+        if missing:
+            operator.report({'WARNING'},
+                            "%s skipped: bones not in the armature: %s"
+                            % (fname, ", ".join(sorted(missing))))
+            continue
+
+        # The first file sets the scene frame rate
+        if round_frames and not fps_set:
+            fps = xml_analyse_fps(xDoc)
+            if fps:
+                print("Setting FPS to", fps)
+                context.scene.render.fps = int(round(fps))
+            fps_set = True
+
+        if armature_rest:
+            count = xml_apply_rest_difference(xDoc, armature_rest)
+            if count:
+                operator.report({'INFO'},
+                                "%s: the rest pose of %d bones differs from the "
+                                "armature. The keys are adjusted." % (fname, count))
+
+        data = {}
+        xml_collect_animations(data, xDoc, round_frames)
+        for name in sorted(data['animations'].keys(), reverse=True):
+            if name in bpy.data.actions:
+                if existing_action == 'SKIP':
+                    operator.report({'INFO'},
+                                    "%s: action %s exists, skipped" % (fname, name))
+                    continue
+                blender_remove_action(rig, name)
+            action, slot = blender_create_action(
+                rig, name, data['animations'][name], bone_matrices)
+            blender_add_action_to_nla(rig.animation_data, name, action, slot)
+            imported += 1
+        files_done += 1
+
+    operator.report({'INFO'}, "Imported %d animations from %d of %d files"
+                    % (imported, files_done, len(filepaths)))
+    return {'FINISHED'}
 
 
 def load(operator, context, filepath, xml_converter=None, keep_xml=True,

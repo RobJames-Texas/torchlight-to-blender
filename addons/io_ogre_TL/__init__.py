@@ -20,7 +20,7 @@
 
 """
 Name: 'OGRE for Torchlight 2(*.MESH)'
-Blender: 4.2
+Blender: 5.2
 Group: 'Import/Export'
 Tooltip: 'Import/Export Torchlight 2 OGRE mesh files'
 
@@ -37,6 +37,7 @@ and 'CCCenturion' for trying to refactor the code to be nicer (to be included)
 
 """
 
+import os
 import sys
 import logging
 import bpy
@@ -45,12 +46,13 @@ from bpy_extras.io_utils import (ExportHelper,
                                  ImportHelper,
                                  )
 from bpy.props import (BoolProperty,
+                       CollectionProperty,
                        StringProperty,
                        EnumProperty,
                        )
 
 __author__ = "Rob James"
-__version__ = "0.9.03 2026-07-03"
+__version__ = "1.0.0 2026-11-11"
 __WIKI_URL__ = "https://github.com/RobJames-Texas/torchlight-to-blender"
 
 __bpydoc__ = """\
@@ -60,6 +62,7 @@ Supported:<br>
     * import/export of basic meshes
     * import/export of skeleton
     * import/export of animations
+    * import of individual animation files (.skeleton)
     * import/export of vertex weights
       (ability to import characters and adjust rigs)
     * import/export of vertex colour (RGB)
@@ -74,6 +77,8 @@ Known issues:<br>
       to Blender when exported
 
 History:<br>
+    * v1.0.0   (11-Nov-2026)- Requires Blender 5.2 or later (slotted actions).
+             Now a Blender extension.
     * v0.9.03  (03-Jul-2026)- Work to support Blender 4.2, and some other minor fixes.
     * v0.9.02  (09-Oct-2022)- Fix for animations not being imported in Blender 2.8.
     * v0.9.01  (23-Oct-2021)- Allow bones to be exported in alphabetical order.
@@ -275,6 +280,76 @@ class IMPORT_SCENE_OT_mesh(bpy.types.Operator, ImportHelper):
         rate.prop(self, "round_frames")
 
 # ---------------------------------------------------------------------------
+# Import Animation Operator
+# ---------------------------------------------------------------------------
+class IMPORT_ANIM_OT_skeleton(bpy.types.Operator, ImportHelper):
+    '''Load Ogre animation files (.skeleton) for the selected armature'''
+    bl_idname = "import_anim.skeleton"
+    bl_label = "Import OGRE Animation"
+    bl_options = {'PRESET', 'UNDO'}
+
+    filename_ext = ".skeleton"
+
+    files: CollectionProperty(
+        type=bpy.types.OperatorFileListElement,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+
+    directory: StringProperty(
+        subtype='DIR_PATH',
+        options={'HIDDEN'},
+    )
+
+    filter_glob: StringProperty(
+        default="*.skeleton;*.SKELETON",
+        options={'HIDDEN'},
+    )
+
+    keep_xml: BoolProperty(
+        name="Keep XML",
+        description="Keeps the XML files when converting from .SKELETON",
+        default=False,
+    )
+
+    round_frames: BoolProperty(
+        name="Adjust frame rate",
+        description="Adjust scene frame rate to match the first imported file",
+        default=True,
+    )
+
+    existing_action: EnumProperty(
+        name="Existing actions",
+        description="What to do when an action with the same name exists",
+        items=[('SKIP', "Skip", "Keep the existing action"),
+               ('REPLACE', "Replace",
+                "Delete the existing action and import it again")],
+        default='SKIP',
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return (context.active_object is not None
+                and context.active_object.type == 'ARMATURE')
+
+    def execute(self, context):
+        from . import OgreImport
+
+        converter = findConverter(config.get('OGRETOOLS_XML_CONVERTER'))
+        if not converter:
+            self.report({'ERROR'}, "OgreXMLConverter not found. Set path in Addon Preferences.")
+            return {'CANCELLED'}
+
+        paths = [os.path.join(self.directory, f.name) for f in self.files]
+        try:
+            return OgreImport.load_animations(
+                self, context, paths, xml_converter=converter,
+                keep_xml=self.keep_xml, round_frames=self.round_frames,
+                existing_action=self.existing_action)
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to import: {e}")
+            return {'CANCELLED'}
+
+# ---------------------------------------------------------------------------
 # Export Operator
 # ---------------------------------------------------------------------------
 class EXPORT_SCENE_OT_mesh(bpy.types.Operator, ExportHelper):
@@ -447,6 +522,10 @@ def menu_func_import(self, context):
     self.layout.operator(IMPORT_SCENE_OT_mesh.bl_idname, text="Torchlight OGRE (.mesh)")
 
 
+def menu_func_import_anim(self, context):
+    self.layout.operator(IMPORT_ANIM_OT_skeleton.bl_idname, text="Torchlight Animation (.skeleton)")
+
+
 def menu_func_export(self, context):
     self.layout.operator(EXPORT_SCENE_OT_mesh.bl_idname, text="Torchlight OGRE (.mesh)")
 
@@ -454,6 +533,7 @@ def menu_func_export(self, context):
 classes = (
     OgreTlAddonPreferences,
     IMPORT_SCENE_OT_mesh,
+    IMPORT_ANIM_OT_skeleton,
     EXPORT_SCENE_OT_mesh
 )
 
@@ -469,18 +549,22 @@ def register():
 
     if hasattr(bpy.types, 'TOPBAR_MT_file_import'):
         bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
+        bpy.types.TOPBAR_MT_file_import.append(menu_func_import_anim)
         bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
     else:
         bpy.types.INFO_MT_file_import.append(menu_func_import)
+        bpy.types.INFO_MT_file_import.append(menu_func_import_anim)
         bpy.types.INFO_MT_file_export.append(menu_func_export)
 
 
 def unregister():
     if hasattr(bpy.types, 'TOPBAR_MT_file_import'):
         bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
+        bpy.types.TOPBAR_MT_file_import.remove(menu_func_import_anim)
         bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     else:
         bpy.types.INFO_MT_file_import.remove(menu_func_import)
+        bpy.types.INFO_MT_file_import.remove(menu_func_import_anim)
         bpy.types.INFO_MT_file_export.remove(menu_func_export)
 
     for cls in reversed(classes):
