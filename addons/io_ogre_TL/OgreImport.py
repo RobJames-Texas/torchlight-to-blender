@@ -1060,11 +1060,17 @@ def blender_create_submeshes(meshData, meshName):
     return allObjects
 
 
+def xml_is_current(filename):
+    """True if filename + '.xml' exists and is not older than filename."""
+    xml = filename + '.xml'
+    return os.path.isfile(xml) and os.path.getmtime(xml) >= os.path.getmtime(filename)
+
+
 def convert_xml(convertor, filename, use_existing=True):
     print('create xml', filename)
     if filename.endswith('.xml'):
         return True
-    elif use_existing and os.path.isfile(filename + '.xml'):
+    elif use_existing and xml_is_current(filename):
         return True
     elif convertor is None:
         return False
@@ -1072,7 +1078,7 @@ def convert_xml(convertor, filename, use_existing=True):
         print("Execute: ", convertor, '-q', filename)
         try:
             subprocess.call([convertor, '-q', filename])
-            return os.path.isfile(filename + '.xml')
+            return xml_is_current(filename)
         except Exception:
             print("Error: Could not run", convertor)
             return False
@@ -1359,7 +1365,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
     created_xml = []   # .xml files that this import makes. Existing files stay.
     # get the mesh as .xml file
     if filepath.lower().endswith(".mesh"):
-        mesh_xml_existed = os.path.isfile(filepath + ".xml")
+        mesh_xml_existed = xml_is_current(filepath)
         if convert_xml(xml_converter, filepath):
             pathMeshXml = filepath + ".xml"
             if not mesh_xml_existed:
@@ -1416,7 +1422,7 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
         # there is valid skeleton link and existing file
         elif(skeletonFile != "None"):
             skeletonFileXml = skeletonFile + ".xml"
-            skeleton_xml_existed = os.path.isfile(skeletonFileXml)
+            skeleton_xml_existed = xml_is_current(skeletonFile)
             xDocSkeletonData = "None"
             if convert_xml(xml_converter, skeletonFile):
                 if not skeleton_xml_existed:
