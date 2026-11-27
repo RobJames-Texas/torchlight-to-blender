@@ -1337,10 +1337,14 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
 
     filepath = filepath
     pathMeshXml = filepath
+    created_xml = []   # .xml files that this import makes. Existing files stay.
     # get the mesh as .xml file
     if filepath.lower().endswith(".mesh"):
+        mesh_xml_existed = os.path.isfile(filepath + ".xml")
         if convert_xml(xml_converter, filepath):
             pathMeshXml = filepath + ".xml"
+            if not mesh_xml_existed:
+                created_xml.append(pathMeshXml)
         else:
             operator.report({'ERROR'}, "Failed to convert .mesh files to .xml")
             return {'CANCELLED'}
@@ -1392,11 +1396,14 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
 
         # there is valid skeleton link and existing file
         elif(skeletonFile != "None"):
+            skeletonFileXml = skeletonFile + ".xml"
+            skeleton_xml_existed = os.path.isfile(skeletonFileXml)
+            xDocSkeletonData = "None"
             if convert_xml(xml_converter, skeletonFile):
-                skeletonFileXml = skeletonFile + ".xml"
-
-            # parse .xml skeleton file
-            xDocSkeletonData = xml_open_file(skeletonFileXml)
+                if not skeleton_xml_existed:
+                    created_xml.append(skeletonFileXml)
+                # parse .xml skeleton file
+                xDocSkeletonData = xml_open_file(skeletonFileXml)
             if xDocSkeletonData != "None":
                 xml_collect_bone_data(meshData, xDocSkeletonData)
                 meshData['skeletonName'] = os.path.basename(skeletonFile[:-9])
@@ -1429,10 +1436,10 @@ def load(operator, context, filepath, xml_converter=None, keep_xml=True,
         blender_create_mesh(meshData, folder, onlyName, pathMeshXml)
         blender_create_animations(meshData)
         if not keep_xml:
-            # cleanup by deleting the XML file we created
-            os.unlink("%s" % pathMeshXml)
-            if 'skeleton' in meshData:
-                os.unlink("%s" % skeletonFileXml)
+            # cleanup by deleting the XML files we created
+            for path in created_xml:
+                if os.path.isfile(path):
+                    os.unlink(path)
 
     if SHOW_IMPORT_TRACE:
         print("folder: %s" % folder)
