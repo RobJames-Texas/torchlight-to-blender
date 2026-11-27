@@ -1,6 +1,8 @@
 import subprocess
 import os
 import math
+import shutil
+import tempfile
 from mathutils import Vector, Matrix, Quaternion
 import bpy
 from xml.dom import minidom
@@ -1267,13 +1269,20 @@ def load_animations(operator, context, filepaths, xml_converter=None,
     files_done = 0
     for filepath in filepaths:
         fname = os.path.basename(filepath)
-        if not convert_xml(xml_converter, filepath, use_existing=False):
-            operator.report({'WARNING'}, "%s: failed to convert to .xml" % fname)
-            continue
-        xmlpath = filepath + ".xml"
-        xDoc = xml_open_file(xmlpath)
-        if not keep_xml:
-            os.unlink(xmlpath)
+        # Convert a copy in a temporary folder next to the file. The folder of
+        # the user does not get an .xml file that overwrites an existing one.
+        with tempfile.TemporaryDirectory(dir=os.path.dirname(filepath)) as tmp:
+            tmpfile = os.path.join(tmp, fname)
+            shutil.copy2(filepath, tmpfile)
+            if not convert_xml(xml_converter, tmpfile, use_existing=False):
+                operator.report({'WARNING'}, "%s: failed to convert to .xml" % fname)
+                continue
+            xDoc = xml_open_file(tmpfile + ".xml")
+            if keep_xml:
+                if os.path.exists(filepath + ".xml"):
+                    operator.report({'INFO'}, "%s.xml exists. It did not change." % fname)
+                else:
+                    shutil.copy2(tmpfile + ".xml", filepath + ".xml")
         if xDoc == "None":
             operator.report({'WARNING'}, "%s: failed to read the file" % fname)
             continue
