@@ -52,7 +52,7 @@ from bpy.props import (BoolProperty,
                        )
 
 __author__ = "Rob James"
-__version__ = "1.0.0 2026-11-11"
+__version__ = "1.1.0 2026-11-26"
 __WIKI_URL__ = "https://github.com/RobJames-Texas/torchlight-to-blender"
 
 __bpydoc__ = """\
@@ -77,6 +77,9 @@ Known issues:<br>
       to Blender when exported
 
 History:<br>
+    * v1.1.0   (26-Nov-2026)- Import and export of individual animation files.
+             Option to update the .ANIMATION file. Imported keyframes use
+             linear interpolation. The pose is reset before an animation is sampled.
     * v1.0.0   (11-Nov-2026)- Requires Blender 5.2 or later (slotted actions).
              Now a Blender extension.
     * v0.9.03  (03-Jul-2026)- Work to support Blender 4.2, and some other minor fixes.
