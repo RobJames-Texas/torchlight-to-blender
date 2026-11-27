@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import shutil
+from . import animation_file
 
 SHOW_EXPORT_DUMPS = False
 SHOW_EXPORT_TRACE = False
@@ -1412,9 +1413,36 @@ def xml_to_ogre_convert(blenderMeshData, filepath, ogreXMLconverter,
         return False
 
 
+def find_animation_file(folder, stem=None):
+    """Return the path of the .ANIMATION file in the folder, or None.
+
+    With a stem, find the file with this name. The match ignores case.
+    Without a stem, find the only .ANIMATION file in the folder.
+    """
+    found = [f for f in os.listdir(folder)
+             if f.lower().endswith('.animation')
+             and (stem is None or f.lower() == (stem + '.animation').lower())]
+    return os.path.join(folder, found[0]) if len(found) == 1 else None
+
+
+def blender_update_animation_file(operator, path, animations):
+    """Add an entry to the .ANIMATION file for each exported animation."""
+    entries = [(get_animation_file_name(a['name']).lower(), a['name'], a['length'])
+               for a in animations if not is_empty_animation(a)]
+    name = os.path.basename(path)
+    try:
+        added, skipped = animation_file.update_animation_file(path, entries)
+    except (ValueError, OSError) as e:
+        operator.report({'WARNING'}, "%s did not change: %s" % (name, e))
+        return
+    operator.report({'INFO'}, "%s: %d entries added, %d already there"
+                    % (name, len(added), len(skipped)))
+
+
 def save_animations(operator, context, directory, xml_converter=None,
                     keep_xml=False, export_bonesort='ALPHA',
-                    sample_rate='30', actions='ALL'):
+                    sample_rate='30', actions='ALL',
+                    update_animation_file=False):
     """Export the actions of the active armature as .SKELETON files, with no mesh."""
     armature = context.active_object
     if armature is None or armature.type != 'ARMATURE':
@@ -1456,6 +1484,15 @@ def save_animations(operator, context, directory, xml_converter=None,
         if not keep_xml:
             os.unlink(xmlpath)
     operator.report({'INFO'}, "Exported %d animations" % len(animations))
+
+    if update_animation_file:
+        path = find_animation_file(directory)
+        if path is None:
+            operator.report({'WARNING'},
+                            "There is not exactly one .ANIMATION file in the"
+                            " folder. The file did not change.")
+        else:
+            blender_update_animation_file(operator, path, animations)
     return {'FINISHED'}
 
 
@@ -1495,7 +1532,8 @@ def save(operator, context, filepath,
          export_animation=False,
          export_bonesort='ALPHA',
          animation_files='SINGLE',
-         sample_rate='SCENE'
+         sample_rate='SCENE',
+         update_animation_file=False
          ):
 
     # just check if there is extension - .mesh
@@ -1615,6 +1653,20 @@ def save(operator, context, filepath,
                                keep_xml,
                                export_edgelists):
         operator.report({'WARNING'}, "Failed to convert .xml files to .mesh")
+
+    if update_animation_file:
+        if (animation_files != 'TL2' or not export_skeleton
+                or not export_animation or 'animations' not in blenderMeshData):
+            operator.report({'WARNING'},
+                            "The .ANIMATION file needs the Torchlight 2 layout"
+                            " with skeleton and animations.")
+        else:
+            folder = os.path.dirname(filepath)
+            stem = os.path.splitext(os.path.basename(filepath))[0]
+            path = (find_animation_file(folder, stem)
+                    or os.path.join(folder, stem + ".ANIMATION"))
+            blender_update_animation_file(operator, path,
+                                          blenderMeshData['animations'])
 
     print("done.")
 

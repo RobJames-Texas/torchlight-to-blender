@@ -491,6 +491,14 @@ class EXPORT_SCENE_OT_mesh(bpy.types.Operator, ExportHelper):
         default='30',
     )
 
+    update_animation_file: BoolProperty(
+        name="Update .ANIMATION file",
+        description="Add an entry for each exported animation that has none."
+                    " Existing entries do not change. The add-on makes a"
+                    " backup of the file first.\nNeeds the Torchlight 2 layout",
+        default=False,
+    )
+
     filter_glob: StringProperty(
         default="*.mesh;*.MESH;.xml;.XML",
         options={'HIDDEN'},
@@ -541,6 +549,7 @@ class EXPORT_SCENE_OT_mesh(bpy.types.Operator, ExportHelper):
         animation.enabled = bool(self.export_animation)
         animation.prop(self, "animation_files")
         animation.prop(self, "sample_rate")
+        animation.prop(self, "update_animation_file")
         skeleton.prop(self, "export_bonesort")
 
 # ---------------------------------------------------------------------------
@@ -599,6 +608,15 @@ class EXPORT_ANIM_OT_skeleton(bpy.types.Operator):
         default=False,
     )
 
+    update_animation_file: BoolProperty(
+        name="Update .ANIMATION file",
+        description="Add an entry for each exported animation that has none."
+                    " Existing entries do not change. The add-on makes a"
+                    " backup of the file first.\nThe folder must have one"
+                    " .ANIMATION file",
+        default=False,
+    )
+
     @classmethod
     def poll(cls, context):
         return (context.active_object is not None
@@ -622,6 +640,7 @@ class EXPORT_ANIM_OT_skeleton(bpy.types.Operator):
         layout.prop(self, "actions")
         layout.prop(self, "sample_rate")
         layout.prop(self, "export_bonesort")
+        layout.prop(self, "update_animation_file")
         layout.prop(self, "keep_xml")
 
 # ---------------------------------------------------------------------------
