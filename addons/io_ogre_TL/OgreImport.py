@@ -1247,6 +1247,17 @@ def blender_remove_action(rig, name):
         bpy.data.actions.remove(action)
 
 
+def blender_rig_uses_action(rig, action):
+    """True if the armature uses this action (active action or an NLA strip)."""
+    animdata = rig.animation_data
+    if animdata is None:
+        return False
+    if animdata.action == action:
+        return True
+    return any(strip.action == action
+               for track in animdata.nla_tracks for strip in track.strips)
+
+
 def load_animations(operator, context, filepaths, xml_converter=None,
                     keep_xml=False, round_frames=True,
                     existing_action='SKIP'):
@@ -1312,7 +1323,15 @@ def load_animations(operator, context, filepaths, xml_converter=None,
         data = {}
         xml_collect_animations(data, xDoc, round_frames)
         for name in sorted(data['animations'].keys(), reverse=True):
-            if name in bpy.data.actions:
+            old = bpy.data.actions.get(name)
+            if old is not None:
+                if not blender_rig_uses_action(rig, old):
+                    # Blender would add a suffix (Idle.001), and the export
+                    # would then write IDLE.001.SKELETON.
+                    operator.report({'WARNING'},
+                                    "%s: action %s belongs to other data, skipped"
+                                    % (fname, name))
+                    continue
                 if existing_action == 'SKIP':
                     operator.report({'INFO'},
                                     "%s: action %s exists, skipped" % (fname, name))
