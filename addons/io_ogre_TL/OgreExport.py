@@ -97,7 +97,7 @@ class Bone(object):
 
 class Skeleton(object):
     def __init__(self, ob, sort):
-        self.armature = ob.find_armature()
+        self.armature = ob if ob.type == 'ARMATURE' else ob.find_armature()
         self.name = self.armature.name
         self.ids = {}
         self.hidden = get_is_hidden(self.armature)
@@ -205,7 +205,7 @@ class Skeleton(object):
 #########################################
 
 
-def blender_collect_animation_data(meshData, action_names=None):
+def blender_collect_animation_data(meshData, action_names=None, sample_rate=None):
     if 'skeleton' not in meshData:
         return
     armature = meshData['skeleton'].armature
@@ -264,7 +264,8 @@ def blender_collect_animation_data(meshData, action_names=None):
                 armature,
                 frame_range,
                 scene.render.fps,
-                scene.frame_step)
+                scene.frame_step,
+                sample_rate)
             # Slot names carry a 2-char ID prefix ("OB"); keep action name
             animation['name'] = act.name
             animation['length'] = (frame_range[1] -
@@ -277,7 +278,8 @@ def blender_collect_animation_data(meshData, action_names=None):
         scene.frame_set(currentFrame)
 
 
-def blender_sample_pose_keyframes(armature, frame_range, fps, step=1):
+def blender_sample_pose_keyframes(armature, frame_range, fps, step=1,
+                                  sample_rate=None):
     start, end = frame_range
 
     keyframes = {}
@@ -311,10 +313,25 @@ def blender_sample_pose_keyframes(armature, frame_range, fps, step=1):
         bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
         bone.scale = (1.0, 1.0, 1.0)
 
+    # Times to sample: (time in seconds, frame, subframe)
+    samples = []
+    if sample_rate is None:
+        for frame in range(int(start), int(end)+1, step):
+            samples.append(((frame - start) / fps, frame, 0.0))
+    else:
+        length = (end - start) / fps
+        times = [k / sample_rate
+                 for k in range(int(length * sample_rate + 1e-6) + 1)]
+        if length - times[-1] > 1e-6:
+            times.append(length)
+        for time in times:
+            exact = start + time * fps
+            frame = int(math.floor(exact + 1e-6))
+            samples.append((time, frame, max(0.0, exact - frame)))
+
     # Collect data
-    for frame in range(int(start), int(end)+1, step):
-        time = (frame - start) / fps
-        bpy.context.scene.frame_set(frame)
+    for time, frame, subframe in samples:
+        bpy.context.scene.frame_set(frame, subframe=subframe)
         for bone in armature.pose.bones:
             loc = bone.location
             rot = bone.rotation_quaternion.normalized()
@@ -662,12 +679,35 @@ def xml_write_skeleton(skeleton, animations, xmlfile):
         f.write(bytes(data, 'utf-8'))
 
 
-def xml_save_skeleton_data(blenderMeshData, filepath):
+def get_animation_file_name(name):
+    """Return the file name for an action: upper case, with characters
+    that are not allowed in file names replaced by "_"."""
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name).upper() + ".SKELETON"
+
+
+def is_empty_animation(animation):
+    return animation['length'] == 0 and not any(animation['keyframes'].values())
+
+
+def xml_save_skeleton_data(blenderMeshData, filepath, animation_files='SINGLE'):
     if 'skeleton' in blenderMeshData:
         nameOnly = os.path.splitext(filepath)[0]  # removing .mesh
-        xml_write_skeleton(blenderMeshData['skeleton'],
-                           blenderMeshData.get('animations'),
-                           nameOnly + ".skeleton.xml")
+        skeleton = blenderMeshData['skeleton']
+        animations = blenderMeshData.get('animations')
+        if animation_files == 'TL2' and animations is not None:
+            # The main skeleton has only the empty Bind animation.
+            # Every other animation goes to its own file.
+            folder = os.path.dirname(filepath)
+            files = []
+            for animation in animations:
+                if not is_empty_animation(animation):
+                    path = os.path.join(
+                        folder, get_animation_file_name(animation['name'])) + ".xml"
+                    xml_write_skeleton(skeleton, [animation], path)
+                    files.append(path)
+            blenderMeshData['skeleton_files'] = files
+            animations = [{'name': 'Bind', 'length': 0.0, 'keyframes': {}}]
+        xml_write_skeleton(skeleton, animations, nameOnly + ".skeleton.xml")
 
 
 def xml_save_mesh_data(meshData, filepath, export_skeleton):
@@ -1356,11 +1396,67 @@ def xml_to_ogre_convert(blenderMeshData, filepath, ogreXMLconverter,
             if keep_xml is False:
                 os.unlink("%s" % xmlFilepath)
 
+            # for the separate animation files
+            for xmlFilepath in blenderMeshData.get('skeleton_files', []):
+                if export_edgelists:
+                    subprocess.call([ogreXMLconverter, xmlFilepath])
+                else:
+                    subprocess.call([ogreXMLconverter, "-e", xmlFilepath])
+                if keep_xml is False:
+                    os.unlink("%s" % xmlFilepath)
+
         return True
 
     except Exception:
         print("Error: Could not run", ogreXMLconverter)
         return False
+
+
+def save_animations(operator, context, directory, xml_converter=None,
+                    keep_xml=False, export_bonesort='ALPHA',
+                    sample_rate='30', actions='ALL'):
+    """Export the actions of the active armature as .SKELETON files, with no mesh."""
+    armature = context.active_object
+    if armature is None or armature.type != 'ARMATURE':
+        operator.report({'ERROR'}, "Select an armature first.")
+        return {'CANCELLED'}
+    if xml_converter is None:
+        operator.report({'ERROR'},
+                        "OgreXMLConverter not found. Set path in Addon Preferences.")
+        return {'CANCELLED'}
+
+    skeleton = Skeleton(armature, export_bonesort)
+    animdata = armature.animation_data
+    names = None                                  # ALL
+    if actions == 'ACTIVE':
+        names = [animdata.action.name] if animdata and animdata.action else []
+    elif actions == 'SELECTED':                   # selected NLA tracks
+        names = [s.action.name
+                 for t in (animdata.nla_tracks if animdata else []) if t.select
+                 for s in t.strips if s.action]
+
+    data = {'skeleton': skeleton}
+    rate = None if sample_rate == 'SCENE' else float(sample_rate)
+    blender_collect_animation_data(data, names, rate)
+    animations = [a for a in data.get('animations', [])
+                  if not is_empty_animation(a)]
+    if not animations:
+        operator.report({'WARNING'}, "No animations to export")
+        return {'CANCELLED'}
+
+    files = [get_animation_file_name(a['name']) for a in animations]
+    if len({f.lower() for f in files}) != len(files):
+        operator.report({'ERROR'}, "Two actions give the same file name")
+        return {'CANCELLED'}
+
+    for animation, name in zip(animations, files):
+        xmlpath = os.path.join(directory, name + ".xml")
+        xml_write_skeleton(skeleton, [animation], xmlpath)
+        subprocess.call([xml_converter, "-e", xmlpath])
+        if not keep_xml:
+            os.unlink(xmlpath)
+    operator.report({'INFO'}, "Exported %d animations" % len(animations))
+    return {'FINISHED'}
 
 
 def select_get(obj):
@@ -1397,7 +1493,9 @@ def save(operator, context, filepath,
          enable_by_material=False,
          export_poses=False,
          export_animation=False,
-         export_bonesort='ALPHA'
+         export_bonesort='ALPHA',
+         animation_files='SINGLE',
+         sample_rate='SCENE'
          ):
 
     # just check if there is extension - .mesh
@@ -1433,24 +1531,39 @@ def save(operator, context, filepath,
     # skeleton
     blender_collect_skeleton_data(blenderMeshData, selectedObjects, export_bonesort)
 
+    # A skinned mesh must be exported in the bind pose. Applying the modifiers
+    # would apply the current pose through the Armature modifier.
+    armature = (blenderMeshData['skeleton'].armature
+                if 'skeleton' in blenderMeshData else None)
+    pose_position = None
+    if armature is not None and apply_modifiers:
+        pose_position = armature.data.pose_position
+        armature.data.pose_position = 'REST'
+        context.view_layer.update()
+
     # mesh
     # TODO: Turn this into a factory pattern. Need to follow DRY.
-    if enable_by_material:
-        blender_collect_mesh_data(blenderMeshData, context,
-                                  selectedObjects,
-                                  apply_modifiers,
-                                  export_colour,
-                                  export_tangents,
-                                  export_binormals,
-                                  export_poses)
-    else:
-        blender_collect_mesh_data_original(blenderMeshData, context,
-                                           selectedObjects,
-                                           apply_modifiers,
-                                           export_colour,
-                                           export_tangents,
-                                           export_binormals,
-                                           export_poses)
+    try:
+        if enable_by_material:
+            blender_collect_mesh_data(blenderMeshData, context,
+                                      selectedObjects,
+                                      apply_modifiers,
+                                      export_colour,
+                                      export_tangents,
+                                      export_binormals,
+                                      export_poses)
+        else:
+            blender_collect_mesh_data_original(blenderMeshData, context,
+                                               selectedObjects,
+                                               apply_modifiers,
+                                               export_colour,
+                                               export_tangents,
+                                               export_binormals,
+                                               export_poses)
+    finally:
+        if pose_position is not None:
+            armature.data.pose_position = pose_position
+            context.view_layer.update()
     # materials
     if export_materials:
         blender_collect_material_data(blenderMeshData, selectedObjects)
@@ -1465,7 +1578,16 @@ def save(operator, context, filepath,
                 geometry['parity'] = True
 
     if export_animation:
-        blender_collect_animation_data(blenderMeshData)
+        rate = None if sample_rate == 'SCENE' else float(sample_rate)
+        blender_collect_animation_data(blenderMeshData, sample_rate=rate)
+        if animation_files == 'TL2':
+            # Names that differ only in case give the same file on Windows
+            names = [get_animation_file_name(a['name'])
+                     for a in blenderMeshData.get('animations', [])
+                     if not is_empty_animation(a)]
+            if len(set(n.lower() for n in names)) != len(names):
+                operator.report({'ERROR'}, "Two actions give the same file name")
+                return {'CANCELLED'}
 
     if SHOW_EXPORT_TRACE:
         print(blenderMeshData['materials'])
@@ -1477,7 +1599,7 @@ def save(operator, context, filepath,
         fileWr.close()
 
     if export_skeleton:
-        xml_save_skeleton_data(blenderMeshData, filepath)
+        xml_save_skeleton_data(blenderMeshData, filepath, animation_files)
 
     xml_save_mesh_data(blenderMeshData, filepath, export_skeleton)
 

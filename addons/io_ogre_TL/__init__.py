@@ -467,6 +467,30 @@ class EXPORT_SCENE_OT_mesh(bpy.types.Operator, ExportHelper):
         default=False,
     )
 
+    animation_files: EnumProperty(
+        name="Animation files",
+        description="How to write the animations",
+        items=(
+            ('TL2', "Torchlight 2 layout",
+             "The main skeleton has only Bind. Each action goes to its own"
+             " .SKELETON file"),
+            ('SINGLE', "Single file", "All animations in the skeleton file"),
+        ),
+        default='TL2',
+    )
+
+    sample_rate: EnumProperty(
+        name="Sample rate",
+        description="Frame rate of the exported keys. 30 fps is the rate of"
+                    " the game files.\nAn animation made at a higher rate"
+                    " loses detail at 30 fps",
+        items=(
+            ('30', "30 fps", "Torchlight 2 rate"),
+            ('SCENE', "Scene rate", "Use the frame rate of the scene"),
+        ),
+        default='30',
+    )
+
     filter_glob: StringProperty(
         default="*.mesh;*.MESH;.xml;.XML",
         options={'HIDDEN'},
@@ -513,7 +537,92 @@ class EXPORT_SCENE_OT_mesh(bpy.types.Operator, ExportHelper):
         skeleton = layout.box()
         skeleton.prop(self, "export_skeleton")
         skeleton.prop(self, "export_animation")
+        animation = skeleton.column()
+        animation.enabled = bool(self.export_animation)
+        animation.prop(self, "animation_files")
+        animation.prop(self, "sample_rate")
         skeleton.prop(self, "export_bonesort")
+
+# ---------------------------------------------------------------------------
+# Export Animation Operator
+# ---------------------------------------------------------------------------
+class EXPORT_ANIM_OT_skeleton(bpy.types.Operator):
+    '''Export the actions of the active armature as Torchlight animation files (.SKELETON)'''
+    bl_idname = "export_anim.skeleton"
+    bl_label = "Export OGRE Animation"
+    bl_options = {'PRESET'}
+
+    directory: StringProperty(
+        subtype='DIR_PATH',
+        options={'HIDDEN'},
+    )
+
+    actions: EnumProperty(
+        name="Actions",
+        description="Which actions to export",
+        items=(
+            ('ALL', "All actions", "All actions of the armature"),
+            ('ACTIVE', "Active action", "The action that is assigned to the armature"),
+            ('SELECTED', "Selected NLA tracks",
+             "The actions of the selected NLA tracks"),
+        ),
+        default='ALL',
+    )
+
+    sample_rate: EnumProperty(
+        name="Sample rate",
+        description="Frame rate of the exported keys. 30 fps is the rate of"
+                    " the game files.\nAn animation made at a higher rate"
+                    " loses detail at 30 fps",
+        items=(
+            ('30', "30 fps", "Torchlight 2 rate"),
+            ('SCENE', "Scene rate", "Use the frame rate of the scene"),
+        ),
+        default='30',
+    )
+
+    export_bonesort: EnumProperty(
+        name="Sorting",
+        description="Use the same value as for the mesh. The bone IDs must be"
+                    " the same in all files",
+        items=(
+            ('OGREID', "By Imported OGREID",
+             "Sort by the OGREID property that was added during import."),
+            ('ALPHA', "By Bone Name", "(Torchlight Default) Sort by the alpha-numeric name of the bones."),
+        ),
+        default='ALPHA',
+    )
+
+    keep_xml: BoolProperty(
+        name="Keep XML",
+        description="Keeps the XML files when converting to .SKELETON",
+        default=False,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return (context.active_object is not None
+                and context.active_object.type == 'ARMATURE')
+
+    def invoke(self, context, event):
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        from . import OgreExport
+
+        keywords = self.as_keywords(ignore=("directory",))
+        keywords['xml_converter'] = findConverter(
+            config.get('OGRETOOLS_XML_CONVERTER'))
+        return OgreExport.save_animations(self, context, self.directory,
+                                          **keywords)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "actions")
+        layout.prop(self, "sample_rate")
+        layout.prop(self, "export_bonesort")
+        layout.prop(self, "keep_xml")
 
 # ---------------------------------------------------------------------------
 # Menu Registration
@@ -530,11 +639,16 @@ def menu_func_export(self, context):
     self.layout.operator(EXPORT_SCENE_OT_mesh.bl_idname, text="Torchlight OGRE (.mesh)")
 
 
+def menu_func_export_anim(self, context):
+    self.layout.operator(EXPORT_ANIM_OT_skeleton.bl_idname, text="Torchlight Animation (.skeleton)")
+
+
 classes = (
     OgreTlAddonPreferences,
     IMPORT_SCENE_OT_mesh,
     IMPORT_ANIM_OT_skeleton,
-    EXPORT_SCENE_OT_mesh
+    EXPORT_SCENE_OT_mesh,
+    EXPORT_ANIM_OT_skeleton
 )
 
 # ---------------------------------------------------------------------------
@@ -551,10 +665,12 @@ def register():
         bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
         bpy.types.TOPBAR_MT_file_import.append(menu_func_import_anim)
         bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
+        bpy.types.TOPBAR_MT_file_export.append(menu_func_export_anim)
     else:
         bpy.types.INFO_MT_file_import.append(menu_func_import)
         bpy.types.INFO_MT_file_import.append(menu_func_import_anim)
         bpy.types.INFO_MT_file_export.append(menu_func_export)
+        bpy.types.INFO_MT_file_export.append(menu_func_export_anim)
 
 
 def unregister():
@@ -562,10 +678,12 @@ def unregister():
         bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
         bpy.types.TOPBAR_MT_file_import.remove(menu_func_import_anim)
         bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
+        bpy.types.TOPBAR_MT_file_export.remove(menu_func_export_anim)
     else:
         bpy.types.INFO_MT_file_import.remove(menu_func_import)
         bpy.types.INFO_MT_file_import.remove(menu_func_import_anim)
         bpy.types.INFO_MT_file_export.remove(menu_func_export)
+        bpy.types.INFO_MT_file_export.remove(menu_func_export_anim)
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
