@@ -1477,6 +1477,9 @@ def save_animations(operator, context, directory, xml_converter=None,
         operator.report({'ERROR'},
                         "OgreXMLConverter not found. Set path in Addon Preferences.")
         return {'CANCELLED'}
+    if not directory or not os.path.isdir(directory):
+        operator.report({'ERROR'}, "Choose a folder that exists.")
+        return {'CANCELLED'}
 
     skeleton = Skeleton(armature, export_bonesort)
     animdata = armature.animation_data
