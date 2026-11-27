@@ -621,15 +621,18 @@ def xml_read_animation(action, tracks, integerFrames=True):
 
 
 def blender_calc_bone_translation_matrices(rig):
-    """Return {bone name: matrix} used to convert Ogre translation keys."""
+    """Return {bone name: matrix} used to convert Ogre translation keys.
+
+    The matrices use the rest pose of the bones, not the current pose."""
     mat = {}
     fix1 = Matrix([(1, 0, 0), (0, 0, 1), (0, -1, 0)])
     fix2 = Matrix([(0, 1, 0), (0, 0, 1), (1, 0, 0)])
-    for bone in rig.pose.bones:
+    for bone in rig.data.bones:
         if bone.parent:
-            mat[bone.name] = fix2 @ bone.parent.matrix.to_3x3().transposed() @ bone.matrix.to_3x3()
+            mat[bone.name] = (fix2 @ bone.parent.matrix_local.to_3x3().transposed()
+                              @ bone.matrix_local.to_3x3())
         else:
-            mat[bone.name] = fix1 @ bone.matrix.to_3x3()
+            mat[bone.name] = fix1 @ bone.matrix_local.to_3x3()
     return mat
 
 
