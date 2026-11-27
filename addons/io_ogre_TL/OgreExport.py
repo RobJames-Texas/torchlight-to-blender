@@ -1366,51 +1366,44 @@ def blender_collect_material_data(blenderMeshData, selectedObjects):
 
 
 
+def xml_convert_file(converter, xmlpath, keep_xml=False, edge_lists=False):
+    """Convert one .xml file to binary with OgreXMLConverter. Return True on success.
+
+    The .xml file stays when the conversion fails, so the user can look at it."""
+    args = [converter, xmlpath] if edge_lists else [converter, "-e", xmlpath]
+    try:
+        code = subprocess.call(args)
+    except OSError:
+        print("Error: Could not run", converter)
+        return False
+    if code != 0 or not os.path.isfile(xmlpath[:-len(".xml")]):
+        return False
+    if not keep_xml:
+        os.unlink(xmlpath)
+    return True
+
+
 def xml_to_ogre_convert(blenderMeshData, filepath, ogreXMLconverter,
                         export_skeleton, keep_xml, export_edgelists=False):
+    """Convert the exported .xml files. Return True when all conversions worked."""
 
     if ogreXMLconverter is None:
         return False
 
-    # for mesh
-    # use Ogre XML converter  xml -> binary mesh
-    try:
-        xmlFilepath = filepath + ".xml"
-        if export_edgelists:
-            subprocess.call([ogreXMLconverter, xmlFilepath])
-        else:  # if other args are needed, build them ahead of time
-            subprocess.call([ogreXMLconverter, "-e", xmlFilepath])
-        # remove XML file if successfully converted
-        if keep_xml is False and os.path.isfile(filepath):
-            os.unlink("%s" % xmlFilepath)
+    # use Ogre XML converter  xml -> binary
+    xml_files = [filepath + ".xml"]                               # mesh
+    if 'skeleton' in blenderMeshData and export_skeleton:
+        skelFile = os.path.splitext(filepath)[0]  # removing .mesh
+        xml_files.append(skelFile + ".skeleton.xml")              # skeleton
+        xml_files += blenderMeshData.get('skeleton_files', [])    # animation files
 
-        if 'skeleton' in blenderMeshData and export_skeleton:
-            # for skeleton
-            skelFile = os.path.splitext(filepath)[0]  # removing .mesh
-            xmlFilepath = skelFile + ".skeleton.xml"
-            if export_edgelists:
-                subprocess.call([ogreXMLconverter, xmlFilepath])
-            else:
-                subprocess.call([ogreXMLconverter, "-e", xmlFilepath])
-
-            # remove XML file
-            if keep_xml is False:
-                os.unlink("%s" % xmlFilepath)
-
-            # for the separate animation files
-            for xmlFilepath in blenderMeshData.get('skeleton_files', []):
-                if export_edgelists:
-                    subprocess.call([ogreXMLconverter, xmlFilepath])
-                else:
-                    subprocess.call([ogreXMLconverter, "-e", xmlFilepath])
-                if keep_xml is False:
-                    os.unlink("%s" % xmlFilepath)
-
-        return True
-
-    except Exception:
-        print("Error: Could not run", ogreXMLconverter)
-        return False
+    success = True
+    for xmlFilepath in xml_files:
+        # convert all files, also when one conversion fails
+        if not xml_convert_file(ogreXMLconverter, xmlFilepath, keep_xml,
+                                export_edgelists):
+            success = False
+    return success
 
 
 def find_animation_file(folder, stem=None):
@@ -1477,13 +1470,28 @@ def save_animations(operator, context, directory, xml_converter=None,
         operator.report({'ERROR'}, "Two actions give the same file name")
         return {'CANCELLED'}
 
+    converted = []
+    failed = []
+    replaced = 0
     for animation, name in zip(animations, files):
-        xmlpath = os.path.join(directory, name + ".xml")
+        binary = os.path.join(directory, name)
+        existed = os.path.isfile(binary)
+        xmlpath = binary + ".xml"
         xml_write_skeleton(skeleton, [animation], xmlpath)
-        subprocess.call([xml_converter, "-e", xmlpath])
-        if not keep_xml:
-            os.unlink(xmlpath)
-    operator.report({'INFO'}, "Exported %d animations" % len(animations))
+        if xml_convert_file(xml_converter, xmlpath, keep_xml):
+            converted.append(animation)
+            replaced += existed
+        else:
+            failed.append(name)
+
+    if failed:
+        operator.report({'ERROR'}, "Could not convert: %s. The .xml files stay"
+                        " in the folder." % ", ".join(failed))
+    if not converted:
+        return {'CANCELLED'}
+    operator.report({'INFO'}, "Exported %d animations" % len(converted))
+    if replaced:
+        operator.report({'INFO'}, "%d existing files were replaced" % replaced)
 
     if update_animation_file:
         path = find_animation_file(directory)
@@ -1492,7 +1500,7 @@ def save_animations(operator, context, directory, xml_converter=None,
                             "There is not exactly one .ANIMATION file in the"
                             " folder. The file did not change.")
         else:
-            blender_update_animation_file(operator, path, animations)
+            blender_update_animation_file(operator, path, converted)
     return {'FINISHED'}
 
 
@@ -1646,13 +1654,15 @@ def save(operator, context, filepath,
                            overwrite_material,
                            copy_textures)
 
-    if not xml_to_ogre_convert(blenderMeshData,
-                               filepath,
-                               xml_converter,
-                               export_skeleton,
-                               keep_xml,
-                               export_edgelists):
-        operator.report({'WARNING'}, "Failed to convert .xml files to .mesh")
+    converted = xml_to_ogre_convert(blenderMeshData,
+                                    filepath,
+                                    xml_converter,
+                                    export_skeleton,
+                                    keep_xml,
+                                    export_edgelists)
+    if not converted:
+        operator.report({'WARNING'}, "Failed to convert .xml files. "
+                        "The .xml files that failed stay in the folder.")
 
     if update_animation_file:
         if (animation_files != 'TL2' or not export_skeleton
@@ -1660,6 +1670,10 @@ def save(operator, context, filepath,
             operator.report({'WARNING'},
                             "The .ANIMATION file needs the Torchlight 2 layout"
                             " with skeleton and animations.")
+        elif not converted:
+            operator.report({'WARNING'},
+                            "The .ANIMATION file did not change, because a"
+                            " conversion failed.")
         else:
             folder = os.path.dirname(filepath)
             stem = os.path.splitext(os.path.basename(filepath))[0]
