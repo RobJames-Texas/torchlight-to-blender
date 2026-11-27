@@ -1,6 +1,6 @@
 import bpy
 from bpy_extras import anim_utils
-from mathutils import Matrix
+from mathutils import Matrix, Quaternion
 import math
 import os
 import re
@@ -236,47 +236,77 @@ def blender_collect_animation_data(meshData, action_names=None, sample_rate=None
         currentFrame = scene.frame_current
         currentAction = animdata.action
         currentSlot = animdata.action_slot
+        currentPose = blender_save_pose(armature)
         meshData['animations'] = []
-        for act, slot in actions:
-            channelbag = anim_utils.action_get_channelbag_for_slot(act, slot)
-            if channelbag is None or len(channelbag.fcurves) == 0:
-                # Keep empty actions as empty animations. Torchlight 2 needs
-                # the empty "Bind" animation, and import creates it as an
-                # empty action.
-                print('Action', act.name, 'has no F-Curves, exporting empty')
-                meshData['animations'].append({'name': act.name,
-                                               'length': 0.0,
-                                               'keyframes': {}})
-                continue
-            print('Action', act.name)
+        try:
+            for act, slot in actions:
+                channelbag = anim_utils.action_get_channelbag_for_slot(act, slot)
+                if channelbag is None or len(channelbag.fcurves) == 0:
+                    # Keep empty actions as empty animations. Torchlight 2 needs
+                    # the empty "Bind" animation, and import creates it as an
+                    # empty action.
+                    print('Action', act.name, 'has no F-Curves, exporting empty')
+                    meshData['animations'].append({'name': act.name,
+                                                   'length': 0.0,
+                                                   'keyframes': {}})
+                    continue
+                print('Action', act.name)
 
-            # Frame range from the keyframes of this slot's F-Curves
-            frames = [kp.co[0] for fc in channelbag.fcurves
-                      for kp in fc.keyframe_points]
-            if frames:
-                frame_range = (min(frames), max(frames))
-            else:
-                frame_range = tuple(act.frame_range)
+                # Frame range from the keyframes of this slot's F-Curves
+                frames = [kp.co[0] for fc in channelbag.fcurves
+                          for kp in fc.keyframe_points]
+                if frames:
+                    frame_range = (min(frames), max(frames))
+                else:
+                    frame_range = tuple(act.frame_range)
 
-            animdata.action = act
-            animdata.action_slot = slot
-            animation = {}
-            animation['keyframes'] = blender_sample_pose_keyframes(
-                armature,
-                frame_range,
-                scene.render.fps,
-                scene.frame_step,
-                sample_rate)
-            # Slot names carry a 2-char ID prefix ("OB"); keep action name
-            animation['name'] = act.name
-            animation['length'] = (frame_range[1] -
-                                   frame_range[0]) / scene.render.fps
-            meshData['animations'].append(animation)
+                animdata.action = act
+                animdata.action_slot = slot
+                animation = {}
+                animation['keyframes'] = blender_sample_pose_keyframes(
+                    armature,
+                    frame_range,
+                    scene.render.fps,
+                    scene.frame_step,
+                    sample_rate)
+                # Slot names carry a 2-char ID prefix ("OB"); keep action name
+                animation['name'] = act.name
+                animation['length'] = (frame_range[1] -
+                                       frame_range[0]) / scene.render.fps
+                meshData['animations'].append(animation)
+        finally:
+            # Put the action, the pose and the frame back as they were
+            animdata.action = currentAction
+            if currentAction is not None:
+                animdata.action_slot = currentSlot
+            blender_restore_pose(armature, currentPose)
+            scene.frame_set(currentFrame)
 
-        animdata.action = currentAction
-        if currentAction is not None:
-            animdata.action_slot = currentSlot
-        scene.frame_set(currentFrame)
+
+def blender_save_pose(armature):
+    """Return the transform values of all pose bones."""
+    return {b.name: (b.location.copy(), b.rotation_quaternion.copy(),
+                     b.rotation_euler.copy(), tuple(b.rotation_axis_angle),
+                     b.scale.copy()) for b in armature.pose.bones}
+
+
+def blender_restore_pose(armature, saved):
+    """Put back the values from blender_save_pose."""
+    for b in armature.pose.bones:
+        (b.location, b.rotation_quaternion, b.rotation_euler,
+         b.rotation_axis_angle, b.scale) = saved[b.name]
+
+
+def blender_get_bone_rotation(bone):
+    """Return the rotation of the pose bone as a quaternion, in any rotation mode."""
+    if bone.rotation_mode == 'QUATERNION':
+        return bone.rotation_quaternion.normalized()
+    if bone.rotation_mode == 'AXIS_ANGLE':
+        angle, x, y, z = bone.rotation_axis_angle
+        if (x, y, z) == (0.0, 0.0, 0.0):
+            return Quaternion()
+        return Quaternion((x, y, z), angle)
+    return bone.rotation_euler.to_quaternion()
 
 
 def blender_sample_pose_keyframes(armature, frame_range, fps, step=1,
@@ -312,6 +342,8 @@ def blender_sample_pose_keyframes(armature, frame_range, fps, step=1,
     for bone in armature.pose.bones:
         bone.location = (0.0, 0.0, 0.0)
         bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        bone.rotation_euler = (0.0, 0.0, 0.0)
+        bone.rotation_axis_angle = (0.0, 0.0, 1.0, 0.0)
         bone.scale = (1.0, 1.0, 1.0)
 
     # Times to sample: (time in seconds, frame, subframe)
@@ -335,7 +367,7 @@ def blender_sample_pose_keyframes(armature, frame_range, fps, step=1,
         bpy.context.scene.frame_set(frame, subframe=subframe)
         for bone in armature.pose.bones:
             loc = bone.location
-            rot = bone.rotation_quaternion.normalized()
+            rot = blender_get_bone_rotation(bone)
             scl = bone.scale
 
             # transform transation into parent coordinates
