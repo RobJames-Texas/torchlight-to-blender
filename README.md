@@ -21,12 +21,16 @@ I don't know my way around Python very well, but I'll figure it out as I go alon
   * Calculation of tangents and binormals for export
   * Toggle of edge lists during export
   * Export removes animation keyframes that do not change, to keep the XML file small
+  * import of individual animation files (Import > Torchlight Animation (.skeleton)) for the selected armature
+  * export in the Torchlight 2 layout: the main skeleton has only the empty "Bind" animation, and each action goes to its own .SKELETON file
+  * export of animations only (Export > Torchlight Animation (.skeleton)), for all actions, the active action, or the selected NLA tracks
+  * export sample rate of 30 fps or the scene rate
+  * optional update of the .ANIMATION file: it adds entries only, and it makes a backup first
 
 ### TO DO: ###
   * Add unit tests
   * Address bugs logged against original repository
   * Refactor export as a factory pattern
-  * Add support to import and export individual animations
 
 ## for Blender 5.2 and later (import and export) ##
 Blender 4.x and earlier are not supported. Release v0.9.02 is the last release for Blender 2.8 and earlier. Get it from the Releases page.
@@ -39,8 +43,14 @@ Blender 4.x and earlier are not supported. Release v0.9.02 is the last release f
 * Find the Torchlight 2 MESH format add-on in the list, and make sure it is enabled. Open its settings and set the OgreXmlConverter path.
   * Now you should have options in File -> Import and File -> Export for Torchlight OGRE (.mesh)
 
-### Limitations ###
-  * Currently animations are imported and exported from one skeleton file.
+### Animations ###
+Torchlight 2 keeps each animation in its own .SKELETON file. The main skeleton file has only the empty "Bind" animation.
+  * Import the mesh first. Then select the armature and use Import > Torchlight Animation (.skeleton). You can select many files.
+  * Each animation file has its own rest pose for each bone. The add-on stores the rest pose of each bone when it imports the mesh. Import the mesh again if the armature came from an older version of the add-on.
+  * Use the same bone sorting for the mesh and for the animation files. The bone IDs must be the same.
+  * In the mesh export, set "Animation files" to "Torchlight 2 layout" to write one .SKELETON file for each action. "Single file" writes all animations in the skeleton file.
+  * Animation files are written at 30 fps by default. An animation made at a higher rate loses detail. Set "Sample rate" to "Scene rate" to keep it.
+  * "Update .ANIMATION file" adds an entry for each exported animation that has none. It does not change an existing entry. It does not make [KEY] events. Add the events by hand.
 
 ### Known Issues ###
   * imported materials will loose certain informations not applicable to Blender when exported

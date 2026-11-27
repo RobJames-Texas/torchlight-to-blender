@@ -1,12 +1,12 @@
-from xml.dom import minidom
 import bpy
 from bpy_extras import anim_utils
-from mathutils import Vector, Matrix
+from mathutils import Matrix, Quaternion
 import math
 import os
 import re
 import subprocess
 import shutil
+from . import animation_file
 
 SHOW_EXPORT_DUMPS = False
 SHOW_EXPORT_TRACE = False
@@ -17,23 +17,15 @@ def hash_combine(x, y):
     return x ^ y + 0x9e3779b9 + (x << 6) + (x >> 2)
 
 
-def getIsHidden(obj):
+def get_is_hidden(obj):
     return obj.hide_viewport  # 2.8
 
 
-def setIsHidden(obj, isHidden):
+def set_is_hidden(obj, isHidden):
     obj.hide_viewport = isHidden
 
 
-def toMesh(obj, applyModifiers):
-    if applyModifiers:
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        return obj.evaluated_get(depsgraph).to_mesh()
-    else:
-        return obj.to_mesh()
-
-
-def getUVTextures(mesh):
+def get_uv_textures(mesh):
     return mesh.uv_layers
 
 
@@ -106,17 +98,16 @@ class Bone(object):
 
 class Skeleton(object):
     def __init__(self, ob, sort):
-        self.armature = ob.find_armature()
+        self.armature = ob if ob.type == 'ARMATURE' else ob.find_armature()
         self.name = self.armature.name
         self.ids = {}
-        self.hidden = getIsHidden(self.armature)
+        self.hidden = get_is_hidden(self.armature)
         data = self.armature.data
-        setIsHidden(self.armature, False)
+        set_is_hidden(self.armature, False)
 
         # get ogre bone ids - need to be in edit mode to access edit_bones
-        # prev = bpy.context.scene.objects.active
         prev = bpy.context.object
-        setActiveObject(bpy.context, self.armature)
+        set_active_object(bpy.context, self.armature)
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
         bpy.ops.object.mode_set(mode='EDIT', toggle=False)
         for bone in data.edit_bones:
@@ -124,8 +115,8 @@ class Skeleton(object):
                 self.ids[bone.name] = bone['OGREID']
 
         bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
-        setActiveObject(bpy.context, prev)
-        setIsHidden(self.armature, self.hidden)
+        set_active_object(bpy.context, prev)
+        set_is_hidden(self.armature, self.hidden)
 
         # Allocate bone ids
         index = 0
@@ -169,10 +160,6 @@ class Skeleton(object):
 
     def bone_id(self, name):
         return self.ids[name]
-
-    def verify(self):
-        for i, bone in enumerate(self.bones):
-            print(i, bone)
 
     def export_xml(self, doc, root):
         bones = doc.createElement('bones')
@@ -219,7 +206,7 @@ class Skeleton(object):
 #########################################
 
 
-def bCollectAnimationData(meshData):
+def blender_collect_animation_data(meshData, action_names=None, sample_rate=None):
     if 'skeleton' not in meshData:
         return
     armature = meshData['skeleton'].armature
@@ -241,53 +228,89 @@ def bCollectAnimationData(meshData):
             for strip in track.strips:
                 addAction(strip.action, strip.action_slot)
 
+        if action_names is not None:
+            actions = [(a, s) for a, s in actions if a.name in action_names]
+
         # Export them all
         scene = bpy.context.scene
         currentFrame = scene.frame_current
         currentAction = animdata.action
         currentSlot = animdata.action_slot
+        currentPose = blender_save_pose(armature)
         meshData['animations'] = []
-        for act, slot in actions:
-            channelbag = anim_utils.action_get_channelbag_for_slot(act, slot)
-            if channelbag is None or len(channelbag.fcurves) == 0:
-                # Keep empty actions as empty animations. Torchlight 2 needs
-                # the empty "Bind" animation, and import creates it as an
-                # empty action.
-                print('Action', act.name, 'has no F-Curves, exporting empty')
-                meshData['animations'].append({'name': act.name,
-                                               'length': 0.0,
-                                               'keyframes': {}})
-                continue
-            print('Action', act.name)
+        try:
+            for act, slot in actions:
+                channelbag = anim_utils.action_get_channelbag_for_slot(act, slot)
+                if channelbag is None or len(channelbag.fcurves) == 0:
+                    # Keep empty actions as empty animations. Torchlight 2 needs
+                    # the empty "Bind" animation, and import creates it as an
+                    # empty action.
+                    print('Action', act.name, 'has no F-Curves, exporting empty')
+                    meshData['animations'].append({'name': act.name,
+                                                   'length': 0.0,
+                                                   'keyframes': {}})
+                    continue
+                print('Action', act.name)
 
-            # Frame range from the keyframes of this slot's F-Curves
-            frames = [kp.co[0] for fc in channelbag.fcurves
-                      for kp in fc.keyframe_points]
-            if frames:
-                frame_range = (min(frames), max(frames))
-            else:
-                frame_range = tuple(act.frame_range)
+                # Frame range from the keyframes of this slot's F-Curves
+                frames = [kp.co[0] for fc in channelbag.fcurves
+                          for kp in fc.keyframe_points]
+                if frames:
+                    frame_range = (min(frames), max(frames))
+                else:
+                    frame_range = tuple(act.frame_range)
 
-            animdata.action = act
-            animdata.action_slot = slot
-            animation = {}
-            animation['keyframes'] = collectAnimationData(armature,
-                                                          frame_range,
-                                                          scene.render.fps,
-                                                          scene.frame_step)
-            # Slot names carry a 2-char ID prefix ("OB"); keep action name
-            animation['name'] = act.name
-            animation['length'] = (frame_range[1] -
-                                   frame_range[0]) / scene.render.fps
-            meshData['animations'].append(animation)
+                animdata.action = act
+                animdata.action_slot = slot
+                animation = {}
+                animation['keyframes'] = blender_sample_pose_keyframes(
+                    armature,
+                    frame_range,
+                    scene.render.fps,
+                    scene.frame_step,
+                    sample_rate)
+                # Slot names carry a 2-char ID prefix ("OB"); keep action name
+                animation['name'] = act.name
+                animation['length'] = (frame_range[1] -
+                                       frame_range[0]) / scene.render.fps
+                meshData['animations'].append(animation)
+        finally:
+            # Put the action, the pose and the frame back as they were
+            animdata.action = currentAction
+            if currentAction is not None:
+                animdata.action_slot = currentSlot
+            blender_restore_pose(armature, currentPose)
+            scene.frame_set(currentFrame)
 
-        animdata.action = currentAction
-        if currentAction is not None:
-            animdata.action_slot = currentSlot
-        scene.frame_set(currentFrame)
+
+def blender_save_pose(armature):
+    """Return the transform values of all pose bones."""
+    return {b.name: (b.location.copy(), b.rotation_quaternion.copy(),
+                     b.rotation_euler.copy(), tuple(b.rotation_axis_angle),
+                     b.scale.copy()) for b in armature.pose.bones}
 
 
-def collectAnimationData(armature, frame_range, fps, step=1):
+def blender_restore_pose(armature, saved):
+    """Put back the values from blender_save_pose."""
+    for b in armature.pose.bones:
+        (b.location, b.rotation_quaternion, b.rotation_euler,
+         b.rotation_axis_angle, b.scale) = saved[b.name]
+
+
+def blender_get_bone_rotation(bone):
+    """Return the rotation of the pose bone as a quaternion, in any rotation mode."""
+    if bone.rotation_mode == 'QUATERNION':
+        return bone.rotation_quaternion.normalized()
+    if bone.rotation_mode == 'AXIS_ANGLE':
+        angle, x, y, z = bone.rotation_axis_angle
+        if (x, y, z) == (0.0, 0.0, 0.0):
+            return Quaternion()
+        return Quaternion((x, y, z), angle)
+    return bone.rotation_euler.to_quaternion()
+
+
+def blender_sample_pose_keyframes(armature, frame_range, fps, step=1,
+                                  sample_rate=None):
     start, end = frame_range
 
     keyframes = {}
@@ -299,11 +322,10 @@ def collectAnimationData(armature, frame_range, fps, step=1):
 
     # Get base matrices
     mat = {}
-    hidden = getIsHidden(armature)
-    setIsHidden(armature, False)
-    # prev = bpy.context.scene.objects.active
+    hidden = get_is_hidden(armature)
+    set_is_hidden(armature, False)
     prev = bpy.context.object
-    setActiveObject(bpy.context, armature)
+    set_active_object(bpy.context, armature)
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
     bpy.ops.object.mode_set(mode='EDIT', toggle=False)
     for b in armature.data.edit_bones:
@@ -312,16 +334,40 @@ def collectAnimationData(armature, frame_range, fps, step=1):
         else:
             mat[b.name] = fix1 @ b.matrix.to_3x3()
     bpy.ops.object.mode_set(mode='OBJECT', toggle=False)
-    setActiveObject(bpy.context, prev)
-    setIsHidden(armature, hidden)
+    set_active_object(bpy.context, prev)
+    set_is_hidden(armature, hidden)
+
+    # Reset the pose, so bones without F-Curves in this action export the
+    # rest pose and not a leftover pose
+    for bone in armature.pose.bones:
+        bone.location = (0.0, 0.0, 0.0)
+        bone.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        bone.rotation_euler = (0.0, 0.0, 0.0)
+        bone.rotation_axis_angle = (0.0, 0.0, 1.0, 0.0)
+        bone.scale = (1.0, 1.0, 1.0)
+
+    # Times to sample: (time in seconds, frame, subframe)
+    samples = []
+    if sample_rate is None:
+        for frame in range(int(start), int(end)+1, step):
+            samples.append(((frame - start) / fps, frame, 0.0))
+    else:
+        length = (end - start) / fps
+        times = [k / sample_rate
+                 for k in range(int(length * sample_rate + 1e-6) + 1)]
+        if length - times[-1] > 1e-6:
+            times.append(length)
+        for time in times:
+            exact = start + time * fps
+            frame = int(math.floor(exact + 1e-6))
+            samples.append((time, frame, max(0.0, exact - frame)))
 
     # Collect data
-    for frame in range(int(start), int(end)+1, step):
-        time = (frame - start) / fps
-        bpy.context.scene.frame_set(frame)
+    for time, frame, subframe in samples:
+        bpy.context.scene.frame_set(frame, subframe=subframe)
         for bone in armature.pose.bones:
             loc = bone.location
-            rot = bone.rotation_quaternion.normalized()
+            rot = blender_get_bone_rotation(bone)
             scl = bone.scale
 
             # transform transation into parent coordinates
@@ -351,16 +397,16 @@ def collectAnimationData(armature, frame_range, fps, step=1):
         if not (data[0] or data[1] or data[2]):
             keyframes[bone] = None
         else:
-            _pruneConstantKeyframes(data)
+            _prune_constant_keyframes(data)
 
     return keyframes
 
 
-def _pruneConstantKeyframes(data, tolerance=1e-5):
+def _prune_constant_keyframes(data, tolerance=1e-5):
     """Remove keyframes that equal both neighbours (lossless for linear
     interpolation). The first and last keyframes always stay, so a track
     never loses all its keys. All used channels (pos, rot, scl) drop the
-    same frames, because xSaveAnimation reads them with one shared index."""
+    same frames, because xml_save_animation reads them with one shared index."""
     used = [channel for channel in data if channel]
     count = len(used[0])
     if count < 3:
@@ -383,16 +429,15 @@ def _pruneConstantKeyframes(data, tolerance=1e-5):
             data[n] = [data[n][i] for i in keep]
 
 
-def xSaveAnimations(meshData, xNode, xDoc):
-    if 'animations' in meshData:
-        animations = xDoc.createElement("animations")
-        xNode.appendChild(animations)
+def xml_save_animations(animations, xNode, xDoc):
+    xAnimations = xDoc.createElement("animations")
+    xNode.appendChild(xAnimations)
 
-        for animation in meshData['animations']:
-            xSaveAnimation(animation, xDoc, animations)
+    for animation in animations:
+        xml_save_animation(animation, xDoc, xAnimations)
 
 
-def xSaveAnimation(animation, xDoc, xAnimations):
+def xml_save_animation(animation, xDoc, xAnimations):
     anim = xDoc.createElement('animation')
     tracks = xDoc.createElement('tracks')
     xAnimations.appendChild(anim)
@@ -450,11 +495,11 @@ def xSaveAnimation(animation, xDoc, xAnimations):
                 keyframe.appendChild(scale)
 
 
-def setActiveObject(context, obj):
+def set_active_object(context, obj):
     context.view_layer.objects.active = obj
 
 
-def fileExist(filepath):
+def file_exist(filepath):
     try:
         filein = open(filepath)
         filein.close()
@@ -464,7 +509,7 @@ def fileExist(filepath):
         return False
 
 
-def toFmtStr(number):
+def to_fmt_str(number):
     # return str("%0.7f" % number)
     return str(round(number, 7))
 
@@ -478,7 +523,7 @@ def indent(indent):
     return "        "*indent
 
 
-def xSaveGeometry(geometry, xDoc, xMesh):
+def xml_save_geometry(geometry, xDoc, xMesh):
     # I guess positions (vertices) must be there always
     vertices = geometry['positions']
 
@@ -521,7 +566,6 @@ def xSaveGeometry(geometry, xDoc, xMesh):
         xVertexBuffer.setAttribute("normals", "true")
     if isTexCoordsSets:
         xVertexBuffer.setAttribute("texture_coord_dimensions_0", "2")
-        # str(texCoordSets)) # Only export one set
         xVertexBuffer.setAttribute("texture_coords", "1")
 
     if isColours:
@@ -539,23 +583,23 @@ def xSaveGeometry(geometry, xDoc, xMesh):
         xVertex = xDoc.createElement("vertex")
         xVertexBuffer.appendChild(xVertex)
         xPosition = xDoc.createElement("position")
-        xPosition.setAttribute("x", toFmtStr(vx[0]))
-        xPosition.setAttribute("y", toFmtStr(vx[2]))
-        xPosition.setAttribute("z", toFmtStr(-vx[1]))
+        xPosition.setAttribute("x", to_fmt_str(vx[0]))
+        xPosition.setAttribute("y", to_fmt_str(vx[2]))
+        xPosition.setAttribute("z", to_fmt_str(-vx[1]))
         xVertex.appendChild(xPosition)
 
         if isNormals:
             xNormal = xDoc.createElement("normal")
-            xNormal.setAttribute("x", toFmtStr(normals[i][0]))
-            xNormal.setAttribute("y", toFmtStr(normals[i][2]))
-            xNormal.setAttribute("z", toFmtStr(-normals[i][1]))
+            xNormal.setAttribute("x", to_fmt_str(normals[i][0]))
+            xNormal.setAttribute("y", to_fmt_str(normals[i][2]))
+            xNormal.setAttribute("z", to_fmt_str(-normals[i][1]))
             xVertex.appendChild(xNormal)
 
         if isTexCoordsSets:
             xUVSet = xDoc.createElement("texcoord")
             # take only 1st set for now
-            xUVSet.setAttribute("u", toFmtStr(uvSets[i][0][0]))
-            xUVSet.setAttribute("v", toFmtStr(1.0 - uvSets[i][0][1]))
+            xUVSet.setAttribute("u", to_fmt_str(uvSets[i][0][0]))
+            xUVSet.setAttribute("v", to_fmt_str(1.0 - uvSets[i][0][1]))
             xVertex.appendChild(xUVSet)
 
         if isColours:
@@ -567,22 +611,22 @@ def xSaveGeometry(geometry, xDoc, xMesh):
 
         if isTangents:
             xTangent = xDoc.createElement("tangent")
-            xTangent.setAttribute("x", toFmtStr(tangents[i][0]))
-            xTangent.setAttribute("y", toFmtStr(tangents[i][2]))
-            xTangent.setAttribute("z", toFmtStr(-tangents[i][1]))
+            xTangent.setAttribute("x", to_fmt_str(tangents[i][0]))
+            xTangent.setAttribute("y", to_fmt_str(tangents[i][2]))
+            xTangent.setAttribute("z", to_fmt_str(-tangents[i][1]))
             if isParity:
-                xTangent.setAttribute("w", toFmtStr(tangents[i][3]))
+                xTangent.setAttribute("w", to_fmt_str(tangents[i][3]))
             xVertex.appendChild(xTangent)
 
         if isBinormals:
             xBinormal = xDoc.createElement("binormal")
-            xBinormal.setAttribute("x", toFmtStr(binormals[i][0]))
-            xBinormal.setAttribute("y", toFmtStr(binormals[i][2]))
-            xBinormal.setAttribute("z", toFmtStr(-binormals[i][1]))
+            xBinormal.setAttribute("x", to_fmt_str(binormals[i][0]))
+            xBinormal.setAttribute("y", to_fmt_str(binormals[i][2]))
+            xBinormal.setAttribute("z", to_fmt_str(-binormals[i][1]))
             xVertex.appendChild(xBinormal)
 
 
-def xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry=False):
+def xml_save_submeshes(meshData, xDoc, xMesh, hasSharedGeometry=False):
     xSubMeshes = xDoc.createElement("submeshes")
     xMesh.appendChild(xSubMeshes)
 
@@ -609,7 +653,7 @@ def xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry=False):
         # if there is geometry per sub mesh
         if 'geometry' in submesh:
             geometry = submesh['geometry']
-            xSaveGeometry(geometry, xDoc, xSubMesh)
+            xml_save_geometry(geometry, xDoc, xSubMesh)
         # boneassignments
         if 'skeleton' in meshData:
             skeleton = meshData['skeleton']
@@ -630,7 +674,7 @@ def xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry=False):
             xSubMesh.appendChild(xBoneAssignments)
 
 
-def xSavePoses(meshData, xDoc, xMesh):
+def xml_save_poses(meshData, xDoc, xMesh):
     xPoses = xDoc.createElement("poses")
     xMesh.appendChild(xPoses)
     for index, submesh in enumerate(meshData['submeshes']):
@@ -652,35 +696,57 @@ def xSavePoses(meshData, xDoc, xMesh):
                 xPose.appendChild(xPoseVertex)
 
 
-def xSaveSkeletonData(blenderMeshData, filepath):
+def xml_write_skeleton(skeleton, animations, xmlfile):
     from xml.dom.minidom import Document
-    if 'skeleton' in blenderMeshData:
-        skeleton = blenderMeshData['skeleton']
 
-        xDoc = Document()
-        xRoot = xDoc.createElement("skeleton")
-        xDoc.appendChild(xRoot)
-        skeleton.export_xml(xDoc, xRoot)
+    xDoc = Document()
+    xRoot = xDoc.createElement("skeleton")
+    xDoc.appendChild(xRoot)
+    skeleton.export_xml(xDoc, xRoot)
 
-        if 'animations' in blenderMeshData:
-            xSaveAnimations(blenderMeshData, xRoot, xDoc)
+    if animations is not None:
+        xml_save_animations(animations, xRoot, xDoc)
 
-        # xmlfile = os.path.join(filepath, '%s.skeleton.xml' %name )
-        nameOnly = os.path.splitext(filepath)[0]  # removing .mesh
-        xmlfile = nameOnly + ".skeleton.xml"
-        data = xDoc.toprettyxml(indent='    ')
-        f = open(xmlfile, 'wb')
+    data = xDoc.toprettyxml(indent='    ')
+    with open(xmlfile, 'wb') as f:
         f.write(bytes(data, 'utf-8'))
-        f.close()
 
 
-def xSaveMeshData(meshData, filepath, export_skeleton):
+def get_animation_file_name(name):
+    """Return the file name for an action: upper case, with characters
+    that are not allowed in file names replaced by "_"."""
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name).upper() + ".SKELETON"
+
+
+def is_empty_animation(animation):
+    return animation['length'] == 0 and not any(animation['keyframes'].values())
+
+
+def xml_save_skeleton_data(blenderMeshData, filepath, animation_files='SINGLE'):
+    if 'skeleton' in blenderMeshData:
+        nameOnly = os.path.splitext(filepath)[0]  # removing .mesh
+        skeleton = blenderMeshData['skeleton']
+        animations = blenderMeshData.get('animations')
+        if animation_files == 'TL2' and animations is not None:
+            # The main skeleton has only the empty Bind animation.
+            # Every other animation goes to its own file.
+            folder = os.path.dirname(filepath)
+            files = []
+            for animation in animations:
+                if not is_empty_animation(animation):
+                    path = os.path.join(
+                        folder, get_animation_file_name(animation['name'])) + ".xml"
+                    xml_write_skeleton(skeleton, [animation], path)
+                    files.append(path)
+            blenderMeshData['skeleton_files'] = files
+            animations = [{'name': 'Bind', 'length': 0.0, 'keyframes': {}}]
+        xml_write_skeleton(skeleton, animations, nameOnly + ".skeleton.xml")
+
+
+def xml_save_mesh_data(meshData, filepath, export_skeleton):
     from xml.dom.minidom import Document
 
     hasSharedGeometry = False
-#   Torchlight does not like shared geometry
-#    if 'sharedgeometry' in meshData:
-#        hasSharedGeometry = True
 
     # Create the minidom document
     print("Creating " + filepath + ".xml")
@@ -691,12 +757,12 @@ def xSaveMeshData(meshData, filepath, export_skeleton):
 
     if hasSharedGeometry:
         geometry = meshData['sharedgeometry']
-        xSaveGeometry(geometry, xDoc, xMesh)
+        xml_save_geometry(geometry, xDoc, xMesh)
 
-    xSaveSubMeshes(meshData, xDoc, xMesh, hasSharedGeometry)
+    xml_save_submeshes(meshData, xDoc, xMesh, hasSharedGeometry)
 
     if 'has_poses' in meshData:
-        xSavePoses(meshData, xDoc, xMesh)
+        xml_save_poses(meshData, xDoc, xMesh)
 
     # skeleton link only
     if 'skeleton' in meshData:
@@ -713,11 +779,10 @@ def xSaveMeshData(meshData, filepath, export_skeleton):
     # Print our newly created XML
     fileWr = open(filepath + ".xml", 'w')
     fileWr.write(xDoc.toprettyxml(indent="    "))  # 4 spaces
-    # doc.writexml(fileWr, "  ")
     fileWr.close()
 
 
-def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
+def xml_save_material_data(filepath, meshData, overwriteMaterialFlag, copyTextures):
     if 'materials' not in meshData:
         return
 
@@ -784,7 +849,7 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
                                   srcTextureFile)
                             srcTextureFile = os.path.join(
                                 baseDirName, srcTextureFile[2:])
-                        if fileExist(srcTextureFile):
+                        if file_exist(srcTextureFile):
                             # copy texture to dir
                             print("Copying texture \"%s\"" % srcTextureFile)
                             try:
@@ -797,21 +862,6 @@ def xSaveMaterialData(filepath, meshData, overwriteMaterialFlag, copyTextures):
                             print(
                                 "Can't copy texture \"%s\" because file does "
                                 "not exists!" % srcTextureFile)
-
-
-def getVertexIndex(vertexInfo, vertexList):
-    for vIdx, vert in enumerate(vertexList):
-        if vertexInfo == vert:
-            return vIdx
-
-    # not present in list:
-    vertexList.append(vertexInfo)
-    return len(vertexList)-1
-
-
-# Convert rgb colour to brightness value - used for alpha channel
-def luminosity(c):
-    return c[0] * 0.25 + c[1] * 0.5 + c[2] * 0.25
 
 
 def _pick_color_data(mesh, exportColour):
@@ -846,9 +896,9 @@ def _vertex_bone_weights(ob, vertex):
     return weights
 
 
-def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
-                     exportColour, exportTangents, exportBinormals,
-                     exportPoses):
+def blender_collect_mesh_data(meshData, context, selectedObjects,
+                              applyModifiers, exportColour, exportTangents,
+                              exportBinormals, exportPoses):
     import bmesh
     import sys
     depsgraph = context.evaluated_depsgraph_get()
@@ -858,7 +908,6 @@ def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
     wantTangents, wantBinormals = exportTangents, exportBinormals
     for ob in selectedObjects:
         exportTangents, exportBinormals = wantTangents, wantBinormals
-        # ob = bpy.types.Object ##
         materials = []
         for mat in ob.data.materials:
             if mat:
@@ -1018,7 +1067,7 @@ def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
             subMeshData['geometry'] = {}
             subMeshData['geometry']['positions'] = positions
             subMeshData['geometry']['normals'] = normals
-            subMeshData['geometry']['texcoordsets'] = len(getUVTextures(mesh))
+            subMeshData['geometry']['texcoordsets'] = len(get_uv_textures(mesh))
 
             if uvData:
                 subMeshData['geometry']['uvsets'] = uvTex
@@ -1043,9 +1092,10 @@ def bCollectMeshData(meshData, context, selectedObjects, applyModifiers,
     return meshData
 
 
-def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
-                             exportColour, exportTangents, exportBinormals,
-                             exportPoses):
+def blender_collect_mesh_data_original(meshData, context, selectedObjects,
+                                       applyModifiers, exportColour,
+                                       exportTangents, exportBinormals,
+                                       exportPoses):
     import bmesh
     depsgraph = context.evaluated_depsgraph_get()
     subMeshesData = []
@@ -1055,7 +1105,6 @@ def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
     for ob in selectedObjects:
         exportTangents, exportBinormals = wantTangents, wantBinormals
         subMeshData = {}
-        # ob = bpy.types.Object ##
         materialName = ob.name
         for m in ob.data.materials:
             if m:
@@ -1214,9 +1263,9 @@ def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
 
         geometry['positions'] = positions
         geometry['normals'] = normals
-        geometry['texcoordsets'] = len(getUVTextures(mesh))
+        geometry['texcoordsets'] = len(get_uv_textures(mesh))
         if SHOW_EXPORT_TRACE:
-            print("texcoordsets: " + str(len(getUVTextures(mesh))))
+            print("texcoordsets: " + str(len(get_uv_textures(mesh))))
         if uvData:
             geometry['uvsets'] = uvTex
         if colourData or alphaData:
@@ -1249,7 +1298,7 @@ def bCollectMeshDataOriginal(meshData, context, selectedObjects, applyModifiers,
     return meshData
 
 
-def bCollectSkeletonData(blenderMeshData, selectedObjects, sort):
+def blender_collect_skeleton_data(blenderMeshData, selectedObjects, sort):
     if SHOW_EXPORT_TRACE:
         print("bpy.data.armatures = %s" % bpy.data.armatures)
 
@@ -1261,14 +1310,13 @@ def bCollectSkeletonData(blenderMeshData, selectedObjects, sort):
         blenderMeshData['skeleton'] = skeleton
 
 
-def bCollectMaterialData(blenderMeshData, selectedObjects):
+def blender_collect_material_data(blenderMeshData, selectedObjects):
     allMaterials = {}
     blenderMeshData['materials'] = allMaterials
 
     for ob in selectedObjects:
         if ob.type == 'MESH' and len(ob.data.materials) > 0:
             for mat in ob.data.materials:
-                # mat = bpy.types.Material ##
                 if mat and mat.name not in allMaterials:
                     matInfo = {}
                     bsdf = None
@@ -1342,7 +1390,7 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
                             if texImage and texImage.image:
                                 texInfo = {}
                                 texInfo['texture'] = \
-                                    getTextureFileName(texImage.image)
+                                    get_texture_file_name(texImage.image)
                                 texInfo['texture_path'] = \
                                     texImage.image.filepath
                                 matInfo['textures'].append(texInfo)
@@ -1350,49 +1398,152 @@ def bCollectMaterialData(blenderMeshData, selectedObjects):
 
 
 
-def XMLtoOGREConvert(blenderMeshData, filepath, ogreXMLconverter,
-                     export_skeleton, keep_xml, export_edgelists=False):
+def xml_convert_file(converter, xmlpath, keep_xml=False, edge_lists=False):
+    """Convert one .xml file to binary with OgreXMLConverter. Return True on success.
+
+    The .xml file stays when the conversion fails, so the user can look at it."""
+    args = [converter, xmlpath] if edge_lists else [converter, "-e", xmlpath]
+    try:
+        code = subprocess.call(args)
+    except OSError:
+        print("Error: Could not run", converter)
+        return False
+    if code != 0 or not os.path.isfile(xmlpath[:-len(".xml")]):
+        return False
+    if not keep_xml:
+        os.unlink(xmlpath)
+    return True
+
+
+def xml_to_ogre_convert(blenderMeshData, filepath, ogreXMLconverter,
+                        export_skeleton, keep_xml, export_edgelists=False):
+    """Convert the exported .xml files. Return True when all conversions worked."""
 
     if ogreXMLconverter is None:
         return False
 
-    # for mesh
-    # use Ogre XML converter  xml -> binary mesh
+    # use Ogre XML converter  xml -> binary
+    xml_files = [filepath + ".xml"]                               # mesh
+    if 'skeleton' in blenderMeshData and export_skeleton:
+        skelFile = os.path.splitext(filepath)[0]  # removing .mesh
+        xml_files.append(skelFile + ".skeleton.xml")              # skeleton
+        xml_files += blenderMeshData.get('skeleton_files', [])    # animation files
+
+    success = True
+    for xmlFilepath in xml_files:
+        # convert all files, also when one conversion fails
+        if not xml_convert_file(ogreXMLconverter, xmlFilepath, keep_xml,
+                                export_edgelists):
+            success = False
+    return success
+
+
+def find_animation_file(folder, stem=None):
+    """Return the path of the .ANIMATION file in the folder, or None.
+
+    With a stem, find the file with this name. The match ignores case.
+    Without a stem, find the only .ANIMATION file in the folder.
+    """
+    found = [f for f in os.listdir(folder)
+             if f.lower().endswith('.animation')
+             and (stem is None or f.lower() == (stem + '.animation').lower())]
+    return os.path.join(folder, found[0]) if len(found) == 1 else None
+
+
+def blender_update_animation_file(operator, path, animations):
+    """Add an entry to the .ANIMATION file for each exported animation."""
+    entries = [(get_animation_file_name(a['name']).lower(), a['name'], a['length'])
+               for a in animations if not is_empty_animation(a)]
+    name = os.path.basename(path)
     try:
-        xmlFilepath = filepath + ".xml"
-        if export_edgelists:
-            subprocess.call([ogreXMLconverter, xmlFilepath])
-        else:  # if other args are needed, build them ahead of time
-            subprocess.call([ogreXMLconverter, "-e", xmlFilepath])
-        # remove XML file if successfully converted
-        if keep_xml is False and os.path.isfile(filepath):
-            os.unlink("%s" % xmlFilepath)
+        added, skipped = animation_file.update_animation_file(path, entries)
+    except (ValueError, OSError) as e:
+        operator.report({'WARNING'}, "%s did not change: %s" % (name, e))
+        return
+    operator.report({'INFO'}, "%s: %d entries added, %d already there"
+                    % (name, len(added), len(skipped)))
 
-        if 'skeleton' in blenderMeshData and export_skeleton:
-            # for skeleton
-            skelFile = os.path.splitext(filepath)[0]  # removing .mesh
-            xmlFilepath = skelFile + ".skeleton.xml"
-            if export_edgelists:
-                subprocess.call([ogreXMLconverter, xmlFilepath])
-            else:
-                subprocess.call([ogreXMLconverter, "-e", xmlFilepath])
 
-            # remove XML file
-            if keep_xml is False:
-                os.unlink("%s" % xmlFilepath)
+def save_animations(operator, context, directory, xml_converter=None,
+                    keep_xml=False, export_bonesort='ALPHA',
+                    sample_rate='30', actions='ALL',
+                    update_animation_file=False):
+    """Export the actions of the active armature as .SKELETON files, with no mesh."""
+    armature = context.active_object
+    if armature is None or armature.type != 'ARMATURE':
+        operator.report({'ERROR'}, "Select an armature first.")
+        return {'CANCELLED'}
+    if xml_converter is None:
+        operator.report({'ERROR'},
+                        "OgreXMLConverter not found. Set path in Addon Preferences.")
+        return {'CANCELLED'}
+    if not directory or not os.path.isdir(directory):
+        operator.report({'ERROR'}, "Choose a folder that exists.")
+        return {'CANCELLED'}
 
-        return True
+    skeleton = Skeleton(armature, export_bonesort)
+    animdata = armature.animation_data
+    names = None                                  # ALL
+    if actions == 'ACTIVE':
+        names = [animdata.action.name] if animdata and animdata.action else []
+    elif actions == 'SELECTED':                   # selected NLA tracks
+        names = [s.action.name
+                 for t in (animdata.nla_tracks if animdata else []) if t.select
+                 for s in t.strips if s.action]
 
-    except Exception:
-        print("Error: Could not run", ogreXMLconverter)
-        return False
+    data = {'skeleton': skeleton}
+    rate = None if sample_rate == 'SCENE' else float(sample_rate)
+    blender_collect_animation_data(data, names, rate)
+    animations = [a for a in data.get('animations', [])
+                  if not is_empty_animation(a)]
+    if not animations:
+        operator.report({'WARNING'}, "No animations to export")
+        return {'CANCELLED'}
+
+    files = [get_animation_file_name(a['name']) for a in animations]
+    if len({f.lower() for f in files}) != len(files):
+        operator.report({'ERROR'}, "Two actions give the same file name")
+        return {'CANCELLED'}
+
+    converted = []
+    failed = []
+    replaced = 0
+    for animation, name in zip(animations, files):
+        binary = os.path.join(directory, name)
+        existed = os.path.isfile(binary)
+        xmlpath = binary + ".xml"
+        xml_write_skeleton(skeleton, [animation], xmlpath)
+        if xml_convert_file(xml_converter, xmlpath, keep_xml):
+            converted.append(animation)
+            replaced += existed
+        else:
+            failed.append(name)
+
+    if failed:
+        operator.report({'ERROR'}, "Could not convert: %s. The .xml files stay"
+                        " in the folder." % ", ".join(failed))
+    if not converted:
+        return {'CANCELLED'}
+    operator.report({'INFO'}, "Exported %d animations" % len(converted))
+    if replaced:
+        operator.report({'INFO'}, "%d existing files were replaced" % replaced)
+
+    if update_animation_file:
+        path = find_animation_file(directory)
+        if path is None:
+            operator.report({'WARNING'},
+                            "There is not exactly one .ANIMATION file in the"
+                            " folder. The file did not change.")
+        else:
+            blender_update_animation_file(operator, path, converted)
+    return {'FINISHED'}
 
 
 def select_get(obj):
     return obj.select_get()
 
 
-def getTextureFileName(image):
+def get_texture_file_name(image):
     """Return the texture file name to write in the .material file.
 
     Use the file name of the image, not the name of the Blender image.
@@ -1422,7 +1573,10 @@ def save(operator, context, filepath,
          enable_by_material=False,
          export_poses=False,
          export_animation=False,
-         export_bonesort='ALPHA'
+         export_bonesort='ALPHA',
+         animation_files='SINGLE',
+         sample_rate='SCENE',
+         update_animation_file=False
          ):
 
     # just check if there is extension - .mesh
@@ -1456,29 +1610,44 @@ def save(operator, context, filepath,
     blenderMeshData = {}
 
     # skeleton
-    bCollectSkeletonData(blenderMeshData, selectedObjects, export_bonesort)
+    blender_collect_skeleton_data(blenderMeshData, selectedObjects, export_bonesort)
+
+    # A skinned mesh must be exported in the bind pose. Applying the modifiers
+    # would apply the current pose through the Armature modifier.
+    armature = (blenderMeshData['skeleton'].armature
+                if 'skeleton' in blenderMeshData else None)
+    pose_position = None
+    if armature is not None and apply_modifiers:
+        pose_position = armature.data.pose_position
+        armature.data.pose_position = 'REST'
+        context.view_layer.update()
 
     # mesh
     # TODO: Turn this into a factory pattern. Need to follow DRY.
-    if enable_by_material:
-        bCollectMeshData(blenderMeshData, context,
-                         selectedObjects,
-                         apply_modifiers,
-                         export_colour,
-                         export_tangents,
-                         export_binormals,
-                         export_poses)
-    else:
-        bCollectMeshDataOriginal(blenderMeshData, context,
-                                 selectedObjects,
-                                 apply_modifiers,
-                                 export_colour,
-                                 export_tangents,
-                                 export_binormals,
-                                 export_poses)
+    try:
+        if enable_by_material:
+            blender_collect_mesh_data(blenderMeshData, context,
+                                      selectedObjects,
+                                      apply_modifiers,
+                                      export_colour,
+                                      export_tangents,
+                                      export_binormals,
+                                      export_poses)
+        else:
+            blender_collect_mesh_data_original(blenderMeshData, context,
+                                               selectedObjects,
+                                               apply_modifiers,
+                                               export_colour,
+                                               export_tangents,
+                                               export_binormals,
+                                               export_poses)
+    finally:
+        if pose_position is not None:
+            armature.data.pose_position = pose_position
+            context.view_layer.update()
     # materials
     if export_materials:
-        bCollectMaterialData(blenderMeshData, selectedObjects)
+        blender_collect_material_data(blenderMeshData, selectedObjects)
 
     if tangent_parity:
         # Honor the "Parity in W" checkbox: store parity in the tangent W component.
@@ -1490,7 +1659,16 @@ def save(operator, context, filepath,
                 geometry['parity'] = True
 
     if export_animation:
-        bCollectAnimationData(blenderMeshData)
+        rate = None if sample_rate == 'SCENE' else float(sample_rate)
+        blender_collect_animation_data(blenderMeshData, sample_rate=rate)
+        if animation_files == 'TL2':
+            # Names that differ only in case give the same file on Windows
+            names = [get_animation_file_name(a['name'])
+                     for a in blenderMeshData.get('animations', [])
+                     if not is_empty_animation(a)]
+            if len(set(n.lower() for n in names)) != len(names):
+                operator.report({'ERROR'}, "Two actions give the same file name")
+                return {'CANCELLED'}
 
     if SHOW_EXPORT_TRACE:
         print(blenderMeshData['materials'])
@@ -1502,22 +1680,42 @@ def save(operator, context, filepath,
         fileWr.close()
 
     if export_skeleton:
-        xSaveSkeletonData(blenderMeshData, filepath)
+        xml_save_skeleton_data(blenderMeshData, filepath, animation_files)
 
-    xSaveMeshData(blenderMeshData, filepath, export_skeleton)
+    xml_save_mesh_data(blenderMeshData, filepath, export_skeleton)
 
-    xSaveMaterialData(filepath,
-                      blenderMeshData,
-                      overwrite_material,
-                      copy_textures)
+    xml_save_material_data(filepath,
+                           blenderMeshData,
+                           overwrite_material,
+                           copy_textures)
 
-    if not XMLtoOGREConvert(blenderMeshData,
-                            filepath,
-                            xml_converter,
-                            export_skeleton,
-                            keep_xml,
-                            export_edgelists):
-        operator.report({'WARNING'}, "Failed to convert .xml files to .mesh")
+    converted = xml_to_ogre_convert(blenderMeshData,
+                                    filepath,
+                                    xml_converter,
+                                    export_skeleton,
+                                    keep_xml,
+                                    export_edgelists)
+    if not converted:
+        operator.report({'WARNING'}, "Failed to convert .xml files. "
+                        "The .xml files that failed stay in the folder.")
+
+    if update_animation_file:
+        if (animation_files != 'TL2' or not export_skeleton
+                or not export_animation or 'animations' not in blenderMeshData):
+            operator.report({'WARNING'},
+                            "The .ANIMATION file needs the Torchlight 2 layout"
+                            " with skeleton and animations.")
+        elif not converted:
+            operator.report({'WARNING'},
+                            "The .ANIMATION file did not change, because a"
+                            " conversion failed.")
+        else:
+            folder = os.path.dirname(filepath)
+            stem = os.path.splitext(os.path.basename(filepath))[0]
+            path = (find_animation_file(folder, stem)
+                    or os.path.join(folder, stem + ".ANIMATION"))
+            blender_update_animation_file(operator, path,
+                                          blenderMeshData['animations'])
 
     print("done.")
 
